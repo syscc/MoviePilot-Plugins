@@ -35,7 +35,7 @@ except Exception as e:
 class JuyingSign(_PluginBase):
     plugin_name = "聚影签到"
     plugin_desc = "自动完成聚影每日签到，支持账号密码登录、失败重试和历史记录"
-    plugin_icon = "juyingsign.png"
+    plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/juyingsign.png"
     plugin_version = "1.0.0"
     plugin_author = "syscc"
     author_url = ""

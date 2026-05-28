@@ -4,7 +4,7 @@
     "description": "自动访问聚影每日签到页并点击立即签到，支持账号密码登录、定时任务、失败重试和历史记录。",
     "labels": "聚影,签到,站点",
     "version": "1.0.0",
-    "icon": "juyingsign.png",
+    "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/juyingsign.png",
     "author": "syscc",
     "level": 2,
     "v2": true,
