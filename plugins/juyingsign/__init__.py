@@ -1,6 +1,6 @@
 """
 聚影签到插件
-版本: 1.0.4
+版本: 1.0.6
 作者: syscc
 功能:
 - 自动访问聚影每日签到页并点击“立即签到”
@@ -36,7 +36,7 @@ class JuyingSign(_PluginBase):
     plugin_name = "聚影签到"
     plugin_desc = "自动完成聚影每日签到，支持账号密码登录、失败重试和历史记录"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/juyingsign.png"
-    plugin_version = "1.0.4"
+    plugin_version = "1.0.6"
     plugin_author = "syscc"
     author_url = ""
     plugin_config_prefix = "juyingsign_"
@@ -219,12 +219,15 @@ class JuyingSign(_PluginBase):
 
         self.save_data("consecutive_days", consecutive_days)
         self.save_data("last_success_date", today_str)
+        site_info = self._fetch_site_info()
 
         return {
             "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
             "status": status,
             "message": message or "签到完成",
             "points": self._extract_points(message),
+            "total_points": site_info.get("total_points", "—"),
+            "site_total_days": site_info.get("site_total_days", "—"),
             "days": consecutive_days,
         }
 
@@ -259,6 +262,8 @@ class JuyingSign(_PluginBase):
         status = sign_dict.get("status", "未知")
         message = sign_dict.get("message", "—")
         points = sign_dict.get("points", "—")
+        total_points = sign_dict.get("total_points", "—")
+        site_total_days = sign_dict.get("site_total_days", "—")
         days = sign_dict.get("days", self.get_data("consecutive_days") or "—")
         sign_time = sign_dict.get("date", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         trigger_type = self._current_trigger_type or "未知"
@@ -280,6 +285,8 @@ class JuyingSign(_PluginBase):
             f"签到信息\n"
             f"详情：{message}\n"
             f"奖励积分：{points}\n"
+            f"总积分：{total_points}\n"
+            f"累计签到：{site_total_days}\n"
             f"连续天数：{days}\n"
             f"━━━━━━━━━━"
         )
@@ -662,13 +669,41 @@ class JuyingSign(_PluginBase):
             and record.get("status") in ["签到成功", "已签到"]
         ]
         latest = max(today_success, key=lambda item: item.get("date", ""), default={})
+        site_info = self._fetch_site_info()
         return {
             "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
             "status": "已签到" if self._is_manual_trigger() else "跳过: 今日已签到",
             "message": latest.get("message") or "今日已完成签到",
             "points": latest.get("points", "—"),
+            "total_points": latest.get("total_points", site_info.get("total_points", "—")),
+            "site_total_days": latest.get("site_total_days", site_info.get("site_total_days", "—")),
             "days": latest.get("days", self.get_data("consecutive_days") or "—"),
         }
+
+    def _fetch_site_info(self) -> Dict[str, Any]:
+        info = {
+            "total_points": self.get_data("total_points") or "—",
+            "site_total_days": self.get_data("site_total_days") or "—",
+        }
+        if JuyingPlaywrightClient is None or not self._cookie:
+            return info
+        try:
+            client = JuyingPlaywrightClient(base_url=self._base_url, headless=True)
+            profile = client.get_profile(cookie_str=self._cookie, storage_state=self._storage_state)
+            total = profile.get("points")
+            if total is not None:
+                info["total_points"] = total
+                self.save_data("total_points", total)
+
+            stats = client.get_checkin_stats(cookie_str=self._cookie, storage_state=self._storage_state)
+            site_total_days = stats.get("my_total_days")
+            if site_total_days is not None:
+                info["site_total_days"] = site_total_days
+                self.save_data("site_total_days", site_total_days)
+            return info
+        except Exception as e:
+            logger.warning(f"获取聚影站点信息失败: {e}")
+            return info
 
     @staticmethod
     def _is_already_signed_message(message: str) -> bool:

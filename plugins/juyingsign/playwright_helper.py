@@ -1,6 +1,7 @@
 __all__ = ["JuyingPlaywrightClient", "JuyingBrowserError"]
 
 from contextlib import contextmanager
+from http.cookiejar import Cookie, CookieJar
 from http.cookies import SimpleCookie
 import json
 from socket import AF_INET, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET, socket
@@ -9,7 +10,6 @@ from typing import Any, Dict, Iterator, Optional, Tuple
 from urllib.error import HTTPError
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, build_opener, HTTPCookieProcessor, ProxyHandler, urlopen
-from http.cookiejar import CookieJar
 
 try:
     from cloakbrowser import launch_context as cloak_launch_context
@@ -280,54 +280,132 @@ class JuyingPlaywrightClient:
         import time
         return int(time.time() * 1000)
 
-    def _login_by_api_cookie(self, username: str, password: str) -> Tuple[bool, str, str, str]:
+    @staticmethod
+    def _make_cookie(name: str, value: str, domain: str) -> Cookie:
+        return Cookie(
+            version=0,
+            name=name,
+            value=value,
+            port=None,
+            port_specified=False,
+            domain=domain,
+            domain_specified=True,
+            domain_initial_dot=False,
+            path="/",
+            path_specified=True,
+            secure=True,
+            expires=None,
+            discard=True,
+            comment=None,
+            comment_url=None,
+            rest={},
+            rfc2109=False,
+        )
+
+    def _api_request_with_login_state(
+        self,
+        path: str,
+        method: str = "GET",
+        cookie_str: str = "",
+        token: str = "",
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[int, Dict[str, Any], str]:
         cookie_jar = CookieJar()
+        domain = urlparse(self.base_url).hostname or "share.huamucang.top"
+        for name, value in self._parse_cookie_str(cookie_str).items():
+            cookie_jar.set_cookie(self._make_cookie(name, value, domain))
+
         handlers = [HTTPCookieProcessor(cookie_jar)]
         proxy = JuyingPlaywrightClient._urllib_proxy_handler()
         if proxy:
             handlers.append(proxy)
         opener = build_opener(*handlers)
 
-        payload = json.dumps({"username": username, "password": password}).encode("utf-8")
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        headers = {
+            "User-Agent": self._UA,
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Origin": self.base_url,
+            "Referer": f"{self.base_url}{self.checkin_path}",
+        }
+        if token:
+            headers["X-App-User-Token"] = token
         request = Request(
-            f"{self.base_url}/api/app/login/",
-            data=payload,
-            method="POST",
-            headers={
-                "User-Agent": self._UA,
-                "Accept": "application/json, text/plain, */*",
-                "Content-Type": "application/json",
-                "X-Requested-With": "XMLHttpRequest",
-                "Origin": self.base_url,
-                "Referer": f"{self.base_url}{self.login_path}",
-            },
+            f"{self.base_url}{path}",
+            data=data,
+            method=method,
+            headers=headers,
         )
         try:
             response = opener.open(request, timeout=30)
             with response:
                 body = response.read().decode("utf-8", errors="replace")
-                headers = response.headers
                 status = response.status
         except HTTPError as err:
             body = err.read().decode("utf-8", errors="replace")
-            headers = err.headers
             status = err.code
 
         try:
             data = json.loads(body or "{}")
         except Exception:
             data = {}
-        if status >= 400 or data.get("status") == "error":
-            return False, "", "", str(data.get("message") or body[:200] or f"登录接口 HTTP {status}")
+        return status, data, self._cookiejar_to_str(cookie_jar)
 
-        cookie_str = self._cookiejar_to_str(cookie_jar)
-        if not cookie_str:
-            cookie_str = self._set_cookie_headers_to_str(headers.get_all("Set-Cookie") or [])
+    def _login_by_api_cookie(self, username: str, password: str) -> Tuple[bool, str, str, str]:
+        status, data, cookie_str = self._api_request_with_login_state(
+            path="/api/app/login/",
+            method="POST",
+            payload={"username": username, "password": password},
+        )
+        if status >= 400 or data.get("status") == "error":
+            return False, "", "", str(data.get("message") or f"登录接口 HTTP {status}")
+
         if not cookie_str:
             return False, "", "", "登录接口未返回 Cookie"
 
         storage_state = self._storage_state_from_token(str(data.get("token") or ""))
         return True, cookie_str, storage_state, "登录成功"
+
+    def get_profile(self, cookie_str: str, storage_state: str = "") -> Dict[str, Any]:
+        token = self._token_from_storage_state(storage_state)
+        status, data, _ = self._api_request_with_login_state(
+            path="/api/app/profile/",
+            method="GET",
+            cookie_str=cookie_str,
+            token=token,
+        )
+        if status >= 400 or not isinstance(data, dict):
+            return {}
+        user = data.get("user")
+        return user if isinstance(user, dict) else data
+
+    def get_checkin_stats(self, cookie_str: str, storage_state: str = "") -> Dict[str, Any]:
+        token = self._token_from_storage_state(storage_state)
+        status, data, _ = self._api_request_with_login_state(
+            path="/api/app/checkin/stats/",
+            method="GET",
+            cookie_str=cookie_str,
+            token=token,
+        )
+        if status >= 400 or not isinstance(data, dict):
+            return {}
+        return data
+
+    @staticmethod
+    def _token_from_storage_state(storage_state: str) -> str:
+        if not storage_state:
+            return ""
+        try:
+            state = json.loads(storage_state)
+        except Exception:
+            return ""
+        for origin in state.get("origins") or []:
+            for item in origin.get("localStorage") or []:
+                if item.get("name") == "app_user_token":
+                    return str(item.get("value") or "")
+        return ""
 
     @staticmethod
     def _extract_page_message(page: Any) -> str:
