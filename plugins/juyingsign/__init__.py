@@ -1,12 +1,13 @@
 """
 聚影签到插件
-版本: 1.0.8
+版本: 1.0.9
 作者: syscc
 功能:
 - 自动访问聚影每日签到页并点击“立即签到”
 - 支持账号密码自动登录、Cookie 登录态、定时任务、失败重试、通知和历史记录
 """
 
+import json
 import re
 import time
 from datetime import datetime, timedelta
@@ -36,7 +37,7 @@ class JuyingSign(_PluginBase):
     plugin_name = "聚影签到"
     plugin_desc = "自动完成聚影每日签到，支持账号密码登录、失败重试和历史记录"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/juyingsign.png"
-    plugin_version = "1.0.8"
+    plugin_version = "1.0.9"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "juyingsign_"
@@ -48,12 +49,20 @@ class JuyingSign(_PluginBase):
     _storage_state = ""
     _username = ""
     _password = ""
+    _accounts_text = ""
+    _accounts: List[Dict[str, Any]] = []
+    _current_account: Dict[str, Any] = {}
+    _legacy_account: Dict[str, str] = {}
+    _current_account_key = "default"
+    _current_account_name = "默认账号"
     _notify = True
     _onlyonce = False
     _cron = "0 8 * * *"
     _base_url = "https://share.huamucang.top"
     _max_retries = 3
-    _retry_interval = 30
+    _retry_interval_minutes = 3
+    _retry_interval = 180
+    _account_interval = 10
     _history_days = 30
     _manual_trigger = False
     _scheduler: Optional[BackgroundScheduler] = None
@@ -70,16 +79,27 @@ class JuyingSign(_PluginBase):
                 self._storage_state = config.get("storage_state") or ""
                 self._username = (config.get("username") or "").strip()
                 self._password = (config.get("password") or "").strip()
+                self._legacy_account = {
+                    "cookie": self._cookie,
+                    "storage_state": self._storage_state,
+                    "username": self._username,
+                    "password": self._password,
+                }
+                self._accounts_text = config.get("accounts") or ""
                 self._notify = self._as_bool(config.get("notify", True))
                 self._onlyonce = config.get("onlyonce", False)
                 self._cron = config.get("cron") or "0 8 * * *"
                 self._base_url = (config.get("base_url") or self._base_url).rstrip("/")
                 self._max_retries = max(0, int(config.get("max_retries", 3)))
-                self._retry_interval = max(1, int(config.get("retry_interval", 30)))
+                self._retry_interval_minutes = self._parse_retry_interval_minutes(config)
+                self._retry_interval = self._retry_interval_minutes * 60
+                self._account_interval = max(0, int(config.get("account_interval", 10)))
                 self._history_days = max(1, int(config.get("history_days", 30)))
                 logger.info(
                     f"聚影签到插件已加载，enabled={self._enabled}, "
-                    f"notify={self._notify}, cron={self._cron}, base_url={self._base_url}"
+                    f"notify={self._notify}, cron={self._cron}, base_url={self._base_url}, "
+                    f"retry_interval={self._retry_interval_minutes}分钟, "
+                    f"account_interval={self._account_interval}秒"
                 )
 
             if self._onlyonce:
@@ -106,6 +126,57 @@ class JuyingSign(_PluginBase):
         self._current_trigger_type = "手动触发" if self._is_manual_trigger() else "定时触发"
         logger.info(f"开始聚影签到，retry={retry_count}, trigger={self._current_trigger_type}")
 
+        try:
+            if retry_count == 0:
+                accounts, error = self._load_accounts()
+                if error:
+                    sign_dict = {
+                        "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
+                        "status": "签到失败: 多账号配置错误",
+                        "message": error,
+                    }
+                    self._send_sign_notification(sign_dict)
+                    return sign_dict
+                if len(accounts) > 1:
+                    results = []
+                    logger.info(
+                        f"聚影多账号按配置顺序串行轮询，共 {len(accounts)} 个账号，"
+                        f"账号间隔 {self._account_interval} 秒"
+                    )
+                    for index, account in enumerate(accounts, start=1):
+                        if index > 1 and self._account_interval > 0:
+                            logger.info(f"等待 {self._account_interval} 秒后执行下一个聚影账号")
+                            time.sleep(self._account_interval)
+                        self._apply_account(account)
+                        results.append(self._sign_current_account(0))
+                    self._restore_legacy_account()
+                    return self._build_multi_result(results)
+                if accounts:
+                    self._apply_account(accounts[0])
+
+            return self._sign_current_account(retry_count)
+        except Exception as e:
+            logger.error(f"聚影签到异常: {e}", exc_info=True)
+            if (datetime.now() - start_time).total_seconds() > 300:
+                message = "执行超时"
+            else:
+                message = str(e)
+            sign_dict = {
+                "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
+                "status": f"签到失败: {message}",
+                "message": message,
+            }
+            self._save_sign_history(sign_dict)
+            self._send_sign_notification(sign_dict)
+            return sign_dict
+        finally:
+            self._manual_trigger = False
+
+    def _sign_current_account(self, retry_count: int = 0):
+        logger.info(
+            f"开始聚影账号签到，account={self._current_account_name}, "
+            f"retry={retry_count}, trigger={self._current_trigger_type}"
+        )
         try:
             if self._is_already_signed_today():
                 sign_dict = self._build_repeat_record()
@@ -150,10 +221,13 @@ class JuyingSign(_PluginBase):
             if retry_count < self._max_retries:
                 self._post_notification(
                     title="【聚影签到重试】",
-                    text=f"签到失败: {message}，{self._retry_interval} 秒后进行第 {retry_count + 1} 次重试",
+                    text=(
+                        f"账号：{self._current_account_name}\n"
+                        f"签到失败: {message}，{self._retry_interval_minutes} 分钟后进行第 {retry_count + 1} 次重试"
+                    ),
                 )
                 time.sleep(self._retry_interval)
-                return self.sign(retry_count + 1)
+                return self._sign_current_account(retry_count + 1)
 
             sign_dict = {
                 "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
@@ -164,21 +238,15 @@ class JuyingSign(_PluginBase):
             self._send_sign_notification(sign_dict)
             return sign_dict
         except Exception as e:
-            logger.error(f"聚影签到异常: {e}", exc_info=True)
-            if (datetime.now() - start_time).total_seconds() > 300:
-                message = "执行超时"
-            else:
-                message = str(e)
+            logger.error(f"聚影账号签到异常: {e}", exc_info=True)
             sign_dict = {
                 "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
-                "status": f"签到失败: {message}",
-                "message": message,
+                "status": f"签到失败: {e}",
+                "message": str(e),
             }
             self._save_sign_history(sign_dict)
             self._send_sign_notification(sign_dict)
             return sign_dict
-        finally:
-            self._manual_trigger = False
 
     def _signin_base(self) -> Tuple[bool, str]:
         if not self._cookie:
@@ -202,13 +270,132 @@ class JuyingSign(_PluginBase):
 
         self._cookie = cookie_str
         self._storage_state = storage_state
+        if self._current_account:
+            self._current_account["cookie"] = cookie_str
+            self._current_account["storage_state"] = storage_state
+            self._save_current_account_config()
         self.update_config(self._build_config())
         return True, message
 
+    def _load_accounts(self) -> Tuple[List[Dict[str, Any]], str]:
+        if self._accounts_text.strip():
+            try:
+                raw_accounts = json.loads(self._accounts_text)
+            except Exception as e:
+                return [], f"多账号配置不是有效 JSON: {e}"
+            if not isinstance(raw_accounts, list):
+                return [], "多账号配置必须是 JSON 数组"
+            accounts = []
+            for index, item in enumerate(raw_accounts, start=1):
+                if not isinstance(item, dict):
+                    return [], f"第 {index} 个账号配置必须是对象"
+                account = {
+                    "name": str(item.get("name") or item.get("username") or f"账号{index}").strip(),
+                    "username": str(item.get("username") or "").strip(),
+                    "password": str(item.get("password") or "").strip(),
+                    "cookie": str(item.get("cookie") or ""),
+                    "storage_state": str(item.get("storage_state") or ""),
+                }
+                if not account["cookie"] and (not account["username"] or not account["password"]):
+                    return [], f"第 {index} 个账号需填写 cookie，或同时填写 username/password"
+                account["key"] = self._account_key(account, index)
+                accounts.append(account)
+            return accounts, ""
+
+        legacy = {
+            "name": self._username or "默认账号",
+            "username": self._username,
+            "password": self._password,
+            "cookie": self._cookie,
+            "storage_state": self._storage_state,
+            "key": "default",
+        }
+        return [legacy], ""
+
+    def _apply_account(self, account: Dict[str, Any]):
+        self._current_account = account
+        self._current_account_key = account.get("key") or "default"
+        self._current_account_name = account.get("name") or account.get("username") or self._current_account_key
+        self._username = account.get("username") or ""
+        self._password = account.get("password") or ""
+        self._cookie = account.get("cookie") or ""
+        self._storage_state = account.get("storage_state") or ""
+
+    def _save_current_account_config(self):
+        if not self._accounts_text.strip():
+            return
+        try:
+            raw_accounts = json.loads(self._accounts_text)
+        except Exception:
+            return
+        if not isinstance(raw_accounts, list):
+            return
+        for index, item in enumerate(raw_accounts, start=1):
+            if not isinstance(item, dict):
+                continue
+            account_key = self._account_key({
+                "name": str(item.get("name") or item.get("username") or f"账号{index}").strip(),
+                "username": str(item.get("username") or "").strip(),
+            }, index)
+            if account_key == self._current_account_key:
+                item["cookie"] = self._cookie
+                item["storage_state"] = self._storage_state
+                break
+        self._accounts_text = json.dumps(raw_accounts, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _account_key(account: Dict[str, Any], index: int) -> str:
+        raw = str(account.get("name") or account.get("username") or f"account_{index}").strip()
+        key = re.sub(r"[^0-9A-Za-z_\-\u4e00-\u9fff]+", "_", raw)
+        return key or f"account_{index}"
+
+    @staticmethod
+    def _build_multi_result(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        success_count = sum(1 for item in results if "失败" not in str(item.get("status", "")))
+        return {
+            "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
+            "status": f"多账号完成: {success_count}/{len(results)}",
+            "results": results,
+        }
+
+    def _restore_legacy_account(self):
+        self._current_account = {}
+        self._current_account_key = "default"
+        self._cookie = self._legacy_account.get("cookie", "")
+        self._storage_state = self._legacy_account.get("storage_state", "")
+        self._username = self._legacy_account.get("username", "")
+        self._password = self._legacy_account.get("password", "")
+        self._current_account_name = self._username or "默认账号"
+
+    def _data_key(self, key: str) -> str:
+        if self._current_account_key == "default":
+            return key
+        return f"{self._current_account_key}_{key}"
+
+    @staticmethod
+    def _parse_retry_interval_minutes(config: Dict[str, Any]) -> int:
+        if "retry_interval_minutes" in config:
+            return max(1, int(config.get("retry_interval_minutes") or 3))
+        retry_interval = int(config.get("retry_interval", 180) or 180)
+        return max(1, (retry_interval + 59) // 60)
+
+    def _all_histories(self) -> List[Dict[str, Any]]:
+        histories = list(self.get_data("sign_history") or [])
+        accounts, error = self._load_accounts()
+        if error:
+            return histories
+        for account in accounts:
+            account_key = account.get("key") or "default"
+            if account_key == "default":
+                continue
+            account_history = self.get_data(f"{account_key}_sign_history") or []
+            histories.extend(account_history)
+        return histories
+
     def _build_success_record(self, status: str, message: str) -> Dict[str, Any]:
         today_str = datetime.now().strftime("%Y-%m-%d")
-        last_date_str = self.get_data("last_success_date")
-        consecutive_days = int(self.get_data("consecutive_days") or 0)
+        last_date_str = self.get_data(self._data_key("last_success_date"))
+        consecutive_days = int(self.get_data(self._data_key("consecutive_days")) or 0)
 
         if last_date_str == today_str:
             pass
@@ -217,12 +404,14 @@ class JuyingSign(_PluginBase):
         else:
             consecutive_days = 1
 
-        self.save_data("consecutive_days", consecutive_days)
-        self.save_data("last_success_date", today_str)
+        self.save_data(self._data_key("consecutive_days"), consecutive_days)
+        self.save_data(self._data_key("last_success_date"), today_str)
         site_info = self._fetch_site_info()
 
         return {
             "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
+            "account": self._current_account_name,
+            "account_key": self._current_account_key,
             "status": status,
             "message": message or "签到完成",
             "points": self._extract_points(message),
@@ -235,9 +424,12 @@ class JuyingSign(_PluginBase):
 
     def _save_sign_history(self, sign_data: Dict[str, Any]):
         try:
-            history = self.get_data("sign_history") or []
+            history_key = self._data_key("sign_history")
+            history = self.get_data(history_key) or []
             if "date" not in sign_data:
                 sign_data["date"] = datetime.today().strftime("%Y-%m-%d %H:%M:%S")
+            sign_data.setdefault("account", self._current_account_name)
+            sign_data.setdefault("account_key", self._current_account_key)
             history.append(sign_data)
 
             now = datetime.now()
@@ -251,8 +443,8 @@ class JuyingSign(_PluginBase):
                     record["date"] = datetime.today().strftime("%Y-%m-%d %H:%M:%S")
                     valid_history.append(record)
 
-            self.save_data(key="sign_history", value=valid_history)
-            logger.info(f"保存聚影签到历史，当前共有 {len(valid_history)} 条记录")
+            self.save_data(key=history_key, value=valid_history)
+            logger.info(f"保存聚影签到历史，account={self._current_account_name}, 当前共有 {len(valid_history)} 条记录")
         except Exception as e:
             logger.error(f"保存聚影签到历史失败: {e}", exc_info=True)
 
@@ -262,13 +454,14 @@ class JuyingSign(_PluginBase):
             return
 
         status = sign_dict.get("status", "未知")
+        account = sign_dict.get("account", self._current_account_name)
         message = sign_dict.get("message", "—")
         points = sign_dict.get("points", "—")
         site_username = sign_dict.get("site_username", "—")
         site_level = sign_dict.get("site_level", "—")
         total_points = sign_dict.get("total_points", "—")
         site_total_days = sign_dict.get("site_total_days", "—")
-        days = sign_dict.get("days", self.get_data("consecutive_days") or "—")
+        days = sign_dict.get("days", self.get_data(self._data_key("consecutive_days")) or "—")
         sign_time = sign_dict.get("date", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         trigger_type = self._current_trigger_type or "未知"
 
@@ -284,6 +477,7 @@ class JuyingSign(_PluginBase):
             f"━━━━━━━━━━\n"
             f"时间：{sign_time}\n"
             f"方式：{trigger_type}\n"
+            f"账号：{account}\n"
             f"状态：{status}\n"
             f"用户：{site_username}\n"
             f"等级：{site_level}\n"
@@ -388,6 +582,27 @@ class JuyingSign(_PluginBase):
                             "component": "VCol",
                             "props": {"cols": 12},
                             "content": [{
+                                "component": "VTextarea",
+                                "props": {
+                                    "model": "accounts",
+                                    "label": "多账号配置",
+                                    "rows": 6,
+                                    "placeholder": (
+                                        "[\n"
+                                        "  {\"name\":\"账号1\",\"username\":\"用户名\",\"password\":\"密码\",\"cookie\":\"\"},\n"
+                                        "  {\"name\":\"账号2\",\"username\":\"用户名2\",\"password\":\"密码2\",\"cookie\":\"\"}\n"
+                                        "]"
+                                    ),
+                                },
+                            }],
+                        }],
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [{
+                            "component": "VCol",
+                            "props": {"cols": 12},
+                            "content": [{
                                 "component": "VTextField",
                                 "props": {
                                     "model": "cookie",
@@ -472,10 +687,23 @@ class JuyingSign(_PluginBase):
                                 "content": [{
                                     "component": "VTextField",
                                     "props": {
-                                        "model": "retry_interval",
-                                        "label": "重试间隔(秒)",
+                                        "model": "retry_interval_minutes",
+                                        "label": "失败重试间隔(分钟)",
                                         "type": "number",
-                                        "placeholder": "30",
+                                        "placeholder": "3",
+                                    },
+                                }],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 3},
+                                "content": [{
+                                    "component": "VTextField",
+                                    "props": {
+                                        "model": "account_interval",
+                                        "label": "账号轮询间隔(秒)",
+                                        "type": "number",
+                                        "placeholder": "10",
                                     },
                                 }],
                             },
@@ -504,7 +732,7 @@ class JuyingSign(_PluginBase):
                                 "props": {
                                     "type": "info",
                                     "variant": "tonal",
-                                    "text": "使用说明：推荐填写用户名和密码，插件会打开聚影登录页自动登录并保存 Cookie；也可以手动登录聚影后复制完整 Cookie。插件会打开 /checkin 页面并点击“立即签到”。",
+                                    "text": "使用说明：单账号可填写用户名密码或 Cookie；多账号请填写 JSON 数组，多账号配置优先级更高。多账号会按配置顺序串行轮询执行，账号之间按“账号轮询间隔”等待；失败后按“失败重试间隔”重试。每个账号会独立保存 Cookie、登录态、历史和通知。",
                                 },
                             }],
                         }],
@@ -518,16 +746,18 @@ class JuyingSign(_PluginBase):
             "cookie": "",
             "username": "",
             "password": "",
+            "accounts": "",
             "base_url": "https://share.huamucang.top",
             "cron": "0 8 * * *",
             "max_retries": 3,
-            "retry_interval": 30,
+            "retry_interval_minutes": 3,
+            "account_interval": 10,
             "history_days": 30,
         }
 
     def get_page(self) -> List[dict]:
-        historys = self.get_data("sign_history") or []
-        consecutive_days = self.get_data("consecutive_days") or 0
+        historys = self._all_histories()
+        consecutive_days = self.get_data(self._data_key("consecutive_days")) or 0
 
         if not historys:
             return [{
@@ -535,7 +765,7 @@ class JuyingSign(_PluginBase):
                 "props": {
                     "type": "info",
                     "variant": "tonal",
-                    "text": f"暂无签到记录。当前插件统计连续签到天数：{consecutive_days}",
+                    "text": "暂无签到记录。",
                     "class": "mb-2",
                 },
             }]
@@ -556,6 +786,7 @@ class JuyingSign(_PluginBase):
                 "component": "tr",
                 "content": [
                     {"component": "td", "props": {"class": "text-caption"}, "text": history.get("date", "")},
+                    {"component": "td", "text": str(history.get("account", "默认账号"))},
                     {
                         "component": "td",
                         "props": {"title": status, "style": "width: 180px; max-width: 180px; overflow: hidden;"},
@@ -610,6 +841,7 @@ class JuyingSign(_PluginBase):
                                     "component": "tr",
                                     "content": [
                                         {"component": "th", "text": "时间"},
+                                        {"component": "th", "text": "账号"},
                                         {"component": "th", "props": {"style": "width: 180px; max-width: 180px;"}, "text": "状态"},
                                         {"component": "th", "props": {"style": "max-width: 420px;"}, "text": "详情"},
                                         {"component": "th", "text": "奖励积分"},
@@ -642,14 +874,21 @@ class JuyingSign(_PluginBase):
             "enabled": self._enabled,
             "notify": self._notify,
             "onlyonce": self._onlyonce if onlyonce is None else onlyonce,
-            "cookie": self._cookie,
-            "storage_state": self._storage_state,
-            "username": self._username,
-            "password": self._password,
+            "cookie": self._legacy_account.get("cookie", self._cookie) if self._accounts_text.strip() else self._cookie,
+            "storage_state": (
+                self._legacy_account.get("storage_state", self._storage_state)
+                if self._accounts_text.strip()
+                else self._storage_state
+            ),
+            "username": self._legacy_account.get("username", self._username) if self._accounts_text.strip() else self._username,
+            "password": self._legacy_account.get("password", self._password) if self._accounts_text.strip() else self._password,
+            "accounts": self._accounts_text,
             "base_url": self._base_url,
             "cron": self._cron,
             "max_retries": self._max_retries,
+            "retry_interval_minutes": self._retry_interval_minutes,
             "retry_interval": self._retry_interval,
+            "account_interval": self._account_interval,
             "history_days": self._history_days,
         }
 
@@ -657,7 +896,7 @@ class JuyingSign(_PluginBase):
         return getattr(self, "_manual_trigger", False)
 
     def _is_already_signed_today(self) -> bool:
-        history = self.get_data("sign_history") or []
+        history = self.get_data(self._data_key("sign_history")) or []
         today = datetime.now().strftime("%Y-%m-%d")
         return any(
             record.get("date", "").startswith(today)
@@ -666,7 +905,7 @@ class JuyingSign(_PluginBase):
         )
 
     def _build_repeat_record(self) -> Dict[str, Any]:
-        history = self.get_data("sign_history") or []
+        history = self.get_data(self._data_key("sign_history")) or []
         today = datetime.now().strftime("%Y-%m-%d")
         today_success = [
             record
@@ -685,15 +924,15 @@ class JuyingSign(_PluginBase):
             "site_level": latest.get("site_level", site_info.get("site_level", "—")),
             "total_points": latest.get("total_points", site_info.get("total_points", "—")),
             "site_total_days": latest.get("site_total_days", site_info.get("site_total_days", "—")),
-            "days": latest.get("days", self.get_data("consecutive_days") or "—"),
+            "days": latest.get("days", self.get_data(self._data_key("consecutive_days")) or "—"),
         }
 
     def _fetch_site_info(self) -> Dict[str, Any]:
         info = {
-            "site_username": self.get_data("site_username") or "—",
-            "site_level": self.get_data("site_level") or "—",
-            "total_points": self.get_data("total_points") or "—",
-            "site_total_days": self.get_data("site_total_days") or "—",
+            "site_username": self.get_data(self._data_key("site_username")) or "—",
+            "site_level": self.get_data(self._data_key("site_level")) or "—",
+            "total_points": self.get_data(self._data_key("total_points")) or "—",
+            "site_total_days": self.get_data(self._data_key("site_total_days")) or "—",
         }
         if JuyingPlaywrightClient is None or not self._cookie:
             return info
@@ -703,23 +942,23 @@ class JuyingSign(_PluginBase):
             site_username = profile.get("username") or profile.get("name") or profile.get("nickname")
             if site_username:
                 info["site_username"] = site_username
-                self.save_data("site_username", site_username)
+                self.save_data(self._data_key("site_username"), site_username)
 
             site_level = profile.get("level_name") or profile.get("level") or profile.get("user_level")
             if site_level is not None:
                 info["site_level"] = site_level
-                self.save_data("site_level", site_level)
+                self.save_data(self._data_key("site_level"), site_level)
 
             total = profile.get("points")
             if total is not None:
                 info["total_points"] = total
-                self.save_data("total_points", total)
+                self.save_data(self._data_key("total_points"), total)
 
             stats = client.get_checkin_stats(cookie_str=self._cookie, storage_state=self._storage_state)
             site_total_days = stats.get("my_total_days")
             if site_total_days is not None:
                 info["site_total_days"] = site_total_days
-                self.save_data("site_total_days", site_total_days)
+                self.save_data(self._data_key("site_total_days"), site_total_days)
             return info
         except Exception as e:
             logger.warning(f"获取聚影站点信息失败: {e}")
@@ -744,7 +983,7 @@ class JuyingSign(_PluginBase):
         return int(match.group(1)) if match else "—"
 
     def _get_last_success_message(self) -> str:
-        history = self.get_data("sign_history") or []
+        history = self.get_data(self._data_key("sign_history")) or []
         today = datetime.now().strftime("%Y-%m-%d")
         success = [
             record
