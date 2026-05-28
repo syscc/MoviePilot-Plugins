@@ -1,7 +1,7 @@
 {
   "JuyingSign": {
     "name": "聚影签到",
-    "description": "自动完成聚影每日签到，支持账号密码登录获取 Token、定时任务、失败重试和历史记录。",
+    "description": "自动完成聚影每日签到，支持账号密码登录获取 Cookie、定时任务、失败重试和历史记录。",
     "labels": "聚影,签到,站点",
     "version": "1.0.0",
     "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/juyingsign.png",
@@ -9,7 +9,7 @@
     "level": 2,
     "v2": true,
     "history": {
-      "1.0.0": "初始版本，支持账号密码自动登录、Token/Cookie 登录态、定时签到、失败重试和历史记录。"
+      "1.0.0": "初始版本，支持账号密码自动登录、Cookie 登录态、定时签到、失败重试和历史记录。"
     }
   }
 }
