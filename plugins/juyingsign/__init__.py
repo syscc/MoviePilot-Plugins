@@ -1,6 +1,6 @@
 """
 聚影签到插件
-版本: 1.0.3
+版本: 1.0.4
 作者: syscc
 功能:
 - 自动访问聚影每日签到页并点击“立即签到”
@@ -36,7 +36,7 @@ class JuyingSign(_PluginBase):
     plugin_name = "聚影签到"
     plugin_desc = "自动完成聚影每日签到，支持账号密码登录、失败重试和历史记录"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/juyingsign.png"
-    plugin_version = "1.0.3"
+    plugin_version = "1.0.4"
     plugin_author = "syscc"
     author_url = ""
     plugin_config_prefix = "juyingsign_"
@@ -107,12 +107,8 @@ class JuyingSign(_PluginBase):
         logger.info(f"开始聚影签到，retry={retry_count}, trigger={self._current_trigger_type}")
 
         try:
-            if not self._is_manual_trigger() and self._is_already_signed_today():
-                sign_dict = {
-                    "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
-                    "status": "跳过: 今日已签到",
-                    "message": self._get_last_success_message(),
-                }
+            if self._is_already_signed_today():
+                sign_dict = self._build_repeat_record()
                 self._send_sign_notification(sign_dict)
                 return sign_dict
 
@@ -655,6 +651,24 @@ class JuyingSign(_PluginBase):
             and record.get("status") in ["签到成功", "已签到"]
             for record in history
         )
+
+    def _build_repeat_record(self) -> Dict[str, Any]:
+        history = self.get_data("sign_history") or []
+        today = datetime.now().strftime("%Y-%m-%d")
+        today_success = [
+            record
+            for record in history
+            if record.get("date", "").startswith(today)
+            and record.get("status") in ["签到成功", "已签到"]
+        ]
+        latest = max(today_success, key=lambda item: item.get("date", ""), default={})
+        return {
+            "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
+            "status": "已签到" if self._is_manual_trigger() else "跳过: 今日已签到",
+            "message": latest.get("message") or "今日已完成签到",
+            "points": latest.get("points", "—"),
+            "days": latest.get("days", self.get_data("consecutive_days") or "—"),
+        }
 
     @staticmethod
     def _is_already_signed_message(message: str) -> bool:
