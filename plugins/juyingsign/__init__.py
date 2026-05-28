@@ -1,6 +1,6 @@
 """
 聚影签到插件
-版本: 1.0.7
+版本: 1.0.8
 作者: syscc
 功能:
 - 自动访问聚影每日签到页并点击“立即签到”
@@ -36,7 +36,7 @@ class JuyingSign(_PluginBase):
     plugin_name = "聚影签到"
     plugin_desc = "自动完成聚影每日签到，支持账号密码登录、失败重试和历史记录"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/juyingsign.png"
-    plugin_version = "1.0.7"
+    plugin_version = "1.0.8"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "juyingsign_"
@@ -226,6 +226,8 @@ class JuyingSign(_PluginBase):
             "status": status,
             "message": message or "签到完成",
             "points": self._extract_points(message),
+            "site_username": site_info.get("site_username", "—"),
+            "site_level": site_info.get("site_level", "—"),
             "total_points": site_info.get("total_points", "—"),
             "site_total_days": site_info.get("site_total_days", "—"),
             "days": consecutive_days,
@@ -262,6 +264,8 @@ class JuyingSign(_PluginBase):
         status = sign_dict.get("status", "未知")
         message = sign_dict.get("message", "—")
         points = sign_dict.get("points", "—")
+        site_username = sign_dict.get("site_username", "—")
+        site_level = sign_dict.get("site_level", "—")
         total_points = sign_dict.get("total_points", "—")
         site_total_days = sign_dict.get("site_total_days", "—")
         days = sign_dict.get("days", self.get_data("consecutive_days") or "—")
@@ -281,6 +285,8 @@ class JuyingSign(_PluginBase):
             f"时间：{sign_time}\n"
             f"方式：{trigger_type}\n"
             f"状态：{status}\n"
+            f"用户：{site_username}\n"
+            f"等级：{site_level}\n"
             f"━━━━━━━━━━\n"
             f"签到信息\n"
             f"详情：{message}\n"
@@ -675,6 +681,8 @@ class JuyingSign(_PluginBase):
             "status": "已签到" if self._is_manual_trigger() else "跳过: 今日已签到",
             "message": latest.get("message") or "今日已完成签到",
             "points": latest.get("points", "—"),
+            "site_username": latest.get("site_username", site_info.get("site_username", "—")),
+            "site_level": latest.get("site_level", site_info.get("site_level", "—")),
             "total_points": latest.get("total_points", site_info.get("total_points", "—")),
             "site_total_days": latest.get("site_total_days", site_info.get("site_total_days", "—")),
             "days": latest.get("days", self.get_data("consecutive_days") or "—"),
@@ -682,6 +690,8 @@ class JuyingSign(_PluginBase):
 
     def _fetch_site_info(self) -> Dict[str, Any]:
         info = {
+            "site_username": self.get_data("site_username") or "—",
+            "site_level": self.get_data("site_level") or "—",
             "total_points": self.get_data("total_points") or "—",
             "site_total_days": self.get_data("site_total_days") or "—",
         }
@@ -690,6 +700,16 @@ class JuyingSign(_PluginBase):
         try:
             client = JuyingPlaywrightClient(base_url=self._base_url, headless=True)
             profile = client.get_profile(cookie_str=self._cookie, storage_state=self._storage_state)
+            site_username = profile.get("username") or profile.get("name") or profile.get("nickname")
+            if site_username:
+                info["site_username"] = site_username
+                self.save_data("site_username", site_username)
+
+            site_level = profile.get("level_name") or profile.get("level") or profile.get("user_level")
+            if site_level is not None:
+                info["site_level"] = site_level
+                self.save_data("site_level", site_level)
+
             total = profile.get("points")
             if total is not None:
                 info["total_points"] = total
