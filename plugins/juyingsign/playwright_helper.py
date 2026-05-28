@@ -4,7 +4,10 @@ from contextlib import contextmanager
 from socket import AF_INET, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET, socket
 from sys import platform
 from typing import Any, Dict, Iterator, Optional, Tuple
+from urllib.error import HTTPError
 from urllib.parse import unquote, urlparse
+from urllib.request import Request, build_opener, ProxyHandler, urlopen
+import json
 
 try:
     from cloakbrowser import launch_context as cloak_launch_context
@@ -84,6 +87,13 @@ class JuyingPlaywrightClient:
         if parsed.password:
             proxy["password"] = unquote(parsed.password)
         return proxy
+
+    @staticmethod
+    def _requests_proxy_settings() -> Optional[Dict[str, str]]:
+        raw = JuyingPlaywrightClient._proxy_url_from_settings()
+        if not raw:
+            return None
+        return {"http": raw, "https": raw}
 
     @staticmethod
     @contextmanager
@@ -275,6 +285,152 @@ class JuyingPlaywrightClient:
             return False, str(err)
         except Exception as err:
             return False, f"签到异常: {err}"
+
+    def api_checkin(self, token: str) -> Tuple[bool, str, Dict[str, Any]]:
+        if not token:
+            return False, "未配置 Token", {}
+
+        headers = {
+            "User-Agent": self._UA,
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-App-User-Token": token,
+            "Origin": self.base_url,
+            "Referer": f"{self.base_url}{self.checkin_path}",
+        }
+        try:
+            stats_status, stats_headers, stats_body = self._api_request(
+                method="GET",
+                url=f"{self.base_url}/api/app/checkin/stats/",
+                headers=headers,
+            )
+            if stats_status == 401:
+                return False, "Token 无效或登录已过期", {}
+            if stats_status >= 400:
+                return False, f"签到状态接口 HTTP {stats_status}: {stats_body[:200]}", {}
+
+            stats = self._loads_json(stats_body)
+            if self._is_api_failure(stats):
+                return False, self._api_message(stats, "获取签到状态失败"), stats
+            if stats.get("checked_today"):
+                message = "今天已经签到"
+                return True, message, stats
+
+            checkin_status, checkin_headers, checkin_body = self._api_request(
+                method="POST",
+                url=f"{self.base_url}/api/app/checkin/do/",
+                headers=headers,
+                payload={},
+            )
+            if checkin_status == 401:
+                return False, "Token 无效或登录已过期", stats
+            payload = self._loads_json(checkin_body)
+            if checkin_status >= 400:
+                return False, self._api_message(payload, checkin_body[:200]), stats
+            if self._is_api_failure(payload):
+                return False, self._api_message(payload, "签到失败"), payload or stats
+
+            refreshed = checkin_headers.get("x-refreshed-token")
+            if refreshed:
+                payload["token"] = refreshed
+            message = self._checkin_message(payload, stats)
+            return True, message, payload or stats
+        except Exception as err:
+            return False, f"签到接口异常: {err}", {}
+
+    def api_login(self, username: str, password: str) -> Tuple[bool, str, str]:
+        if not username or not password:
+            return False, "", "未配置用户名或密码"
+
+        headers = {
+            "User-Agent": self._UA,
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Origin": self.base_url,
+            "Referer": f"{self.base_url}{self.login_path}",
+        }
+        try:
+            status, _, body = self._api_request(
+                method="POST",
+                url=f"{self.base_url}/api/app/login/",
+                headers=headers,
+                payload={"username": username, "password": password},
+            )
+            payload = self._loads_json(body)
+            if status >= 400:
+                return False, "", self._api_message(payload, body[:200])
+            if self._is_api_failure(payload):
+                return False, "", self._api_message(payload, "登录失败")
+            token = payload.get("token")
+            if not token:
+                return False, "", str(payload.get("message") or "登录成功但接口未返回 token")
+            return True, str(token), "登录成功"
+        except Exception as err:
+            return False, "", f"登录接口异常: {err}"
+
+    @staticmethod
+    def _loads_json(body: str) -> Dict[str, Any]:
+        try:
+            data = json.loads(body or "{}")
+            return data if isinstance(data, dict) else {"data": data}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _api_request(
+        method: str,
+        url: str,
+        headers: Dict[str, str],
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[int, Dict[str, str], str]:
+        data = None
+        if payload is not None:
+            data = json.dumps(payload).encode("utf-8")
+        request = Request(url, data=data, headers=headers, method=method)
+        proxy = JuyingPlaywrightClient._requests_proxy_settings()
+        opener = build_opener(ProxyHandler(proxy)) if proxy else None
+        try:
+            response = (opener.open if opener else urlopen)(request, timeout=30)
+            with response:
+                body = response.read().decode("utf-8", errors="replace")
+                return response.status, dict(response.headers.items()), body
+        except HTTPError as err:
+            body = err.read().decode("utf-8", errors="replace")
+            return err.code, dict(err.headers.items()), body
+
+    @staticmethod
+    def _is_api_failure(payload: Dict[str, Any]) -> bool:
+        if not payload:
+            return False
+        status = str(payload.get("status") or "").lower()
+        if status in ("error", "fail", "failed", "failure"):
+            return True
+        if payload.get("success") is False or payload.get("ok") is False:
+            return True
+        code = payload.get("code")
+        if code is None:
+            return False
+        return str(code) not in ("0", "200", "success")
+
+    @staticmethod
+    def _api_message(payload: Dict[str, Any], default: str) -> str:
+        if not payload:
+            return default
+        for key in ("message", "msg", "detail", "error"):
+            value = payload.get(key)
+            if value:
+                return str(value)
+        return default
+
+    @staticmethod
+    def _checkin_message(payload: Dict[str, Any], stats: Dict[str, Any]) -> str:
+        message = JuyingPlaywrightClient._api_message(payload, "")
+        reward = payload.get("reward_points") or stats.get("reward_points")
+        if reward and str(reward) not in message:
+            return f"{message or '签到成功'}，奖励积分 {reward}"
+        return message or "签到成功"
 
     def login(self, username: str, password: str) -> Tuple[bool, str, str]:
         if not username or not password:

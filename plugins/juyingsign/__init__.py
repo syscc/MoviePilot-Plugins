@@ -4,7 +4,7 @@
 作者: syscc
 功能:
 - 自动访问聚影每日签到页并点击“立即签到”
-- 支持账号密码自动登录、Cookie 登录态、定时任务、失败重试、通知和历史记录
+- 支持账号密码自动登录、Token/Cookie 登录态、定时任务、失败重试、通知和历史记录
 """
 
 import re
@@ -45,6 +45,7 @@ class JuyingSign(_PluginBase):
 
     _enabled = False
     _cookie = ""
+    _token = ""
     _username = ""
     _password = ""
     _notify = True
@@ -66,6 +67,7 @@ class JuyingSign(_PluginBase):
             if config:
                 self._enabled = config.get("enabled", False)
                 self._cookie = config.get("cookie") or ""
+                self._token = config.get("token") or ""
                 self._username = (config.get("username") or "").strip()
                 self._password = (config.get("password") or "").strip()
                 self._notify = config.get("notify", True)
@@ -115,13 +117,13 @@ class JuyingSign(_PluginBase):
                     self._send_sign_notification(sign_dict)
                 return sign_dict
 
-            if not self._cookie:
+            if not self._token and not self._cookie:
                 login_ok, login_message = self._auto_login()
                 if not login_ok:
                     sign_dict = {
                         "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
-                        "status": "签到失败: 未配置 Cookie",
-                        "message": f"请填写聚影登录 Cookie，或配置用户名密码自动登录。{login_message}",
+                        "status": "签到失败: 未配置 Token",
+                        "message": f"请填写聚影 Token/Cookie，或配置用户名密码自动登录。{login_message}",
                     }
                     self._save_sign_history(sign_dict)
                     if self._notify:
@@ -140,7 +142,7 @@ class JuyingSign(_PluginBase):
             if self._is_auth_error(message):
                 login_ok, login_message = self._auto_login()
                 if login_ok:
-                    logger.info("聚影登录态失效，已通过账号密码刷新 Cookie，重新执行签到")
+                    logger.info("聚影登录态失效，已通过账号密码刷新 Token，重新执行签到")
                     success, message = self._signin_base()
                     if success:
                         sign_status = "已签到" if self._is_already_signed_message(message) else "签到成功"
@@ -187,12 +189,19 @@ class JuyingSign(_PluginBase):
             self._manual_trigger = False
 
     def _signin_base(self) -> Tuple[bool, str]:
-        if not self._cookie:
-            return False, "未配置 Cookie"
         if JuyingPlaywrightClient is None:
             return False, f"浏览器依赖加载失败，请确认插件依赖已安装。错误信息: {IMPORT_ERROR}"
 
         client = JuyingPlaywrightClient(base_url=self._base_url, headless=True)
+        if self._token:
+            success, message, payload = client.api_checkin(token=self._token)
+            new_token = payload.get("token") if isinstance(payload, dict) else None
+            if new_token and new_token != self._token:
+                self._token = str(new_token)
+                self.update_config(self._build_config())
+            return success, message
+        if not self._cookie:
+            return False, "未配置 Token 或 Cookie"
         return client.checkin(cookie_str=self._cookie)
 
     def _auto_login(self) -> Tuple[bool, str]:
@@ -202,11 +211,11 @@ class JuyingSign(_PluginBase):
             return False, f"浏览器依赖加载失败，请确认插件依赖已安装。错误信息: {IMPORT_ERROR}"
 
         client = JuyingPlaywrightClient(base_url=self._base_url, headless=True)
-        success, cookie_str, message = client.login(username=self._username, password=self._password)
+        success, token, message = client.api_login(username=self._username, password=self._password)
         if not success:
             return False, message
 
-        self._cookie = cookie_str
+        self._token = token
         self.update_config(self._build_config())
         return True, message
 
@@ -348,9 +357,24 @@ class JuyingSign(_PluginBase):
                             "content": [{
                                 "component": "VTextField",
                                 "props": {
+                                    "model": "token",
+                                    "label": "站点 Token",
+                                    "placeholder": "可选，自动登录成功后会自动保存",
+                                },
+                            }],
+                        }],
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [{
+                            "component": "VCol",
+                            "props": {"cols": 12},
+                            "content": [{
+                                "component": "VTextField",
+                                "props": {
                                     "model": "cookie",
                                     "label": "站点 Cookie",
-                                    "placeholder": "请输入聚影已登录账号的完整 Cookie",
+                                    "placeholder": "可选，兼容旧版浏览器签到方式",
                                 },
                             }],
                         }],
@@ -366,7 +390,7 @@ class JuyingSign(_PluginBase):
                                     "props": {
                                         "model": "username",
                                         "label": "用户名/邮箱",
-                                        "placeholder": "用于自动登录获取 Cookie",
+                                        "placeholder": "用于自动登录获取 Token",
                                     },
                                 }],
                             },
@@ -379,7 +403,7 @@ class JuyingSign(_PluginBase):
                                         "model": "password",
                                         "label": "密码",
                                         "type": "password",
-                                        "placeholder": "用于自动登录获取 Cookie",
+                                        "placeholder": "用于自动登录获取 Token",
                                     },
                                 }],
                             },
@@ -462,7 +486,7 @@ class JuyingSign(_PluginBase):
                                 "props": {
                                     "type": "info",
                                     "variant": "tonal",
-                                    "text": "使用说明：推荐填写用户名和密码，插件会自动登录获取 Cookie；也可以手动登录聚影后复制完整 Cookie。插件会打开 /checkin 页面并点击“立即签到”。",
+                                    "text": "使用说明：推荐填写用户名和密码，插件会调用聚影接口登录并自动保存 Token，然后通过签到接口完成签到。Token 失效时会自动重新登录；Cookie 仅作为旧版浏览器签到兼容项。",
                                 },
                             }],
                         }],
@@ -473,6 +497,7 @@ class JuyingSign(_PluginBase):
             "enabled": False,
             "notify": True,
             "onlyonce": False,
+            "token": "",
             "cookie": "",
             "username": "",
             "password": "",
@@ -600,6 +625,7 @@ class JuyingSign(_PluginBase):
             "enabled": self._enabled,
             "notify": self._notify,
             "onlyonce": self._onlyonce if onlyonce is None else onlyonce,
+            "token": self._token,
             "cookie": self._cookie,
             "username": self._username,
             "password": self._password,
@@ -630,7 +656,7 @@ class JuyingSign(_PluginBase):
     def _is_auth_error(message: str) -> bool:
         return any(
             keyword in (message or "")
-            for keyword in ("Cookie", "登录", "过期", "失效", "未授权", "Unauthorized", "/login")
+            for keyword in ("Token", "Cookie", "登录", "过期", "失效", "未授权", "Unauthorized", "/login")
         )
 
     @staticmethod
