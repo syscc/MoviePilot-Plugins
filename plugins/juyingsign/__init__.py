@@ -1,6 +1,6 @@
 """
 聚影签到插件
-版本: 1.0.2
+版本: 1.0.3
 作者: syscc
 功能:
 - 自动访问聚影每日签到页并点击“立即签到”
@@ -36,7 +36,7 @@ class JuyingSign(_PluginBase):
     plugin_name = "聚影签到"
     plugin_desc = "自动完成聚影每日签到，支持账号密码登录、失败重试和历史记录"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/juyingsign.png"
-    plugin_version = "1.0.2"
+    plugin_version = "1.0.3"
     plugin_author = "syscc"
     author_url = ""
     plugin_config_prefix = "juyingsign_"
@@ -70,7 +70,7 @@ class JuyingSign(_PluginBase):
                 self._storage_state = config.get("storage_state") or ""
                 self._username = (config.get("username") or "").strip()
                 self._password = (config.get("password") or "").strip()
-                self._notify = config.get("notify", True)
+                self._notify = self._as_bool(config.get("notify", True))
                 self._onlyonce = config.get("onlyonce", False)
                 self._cron = config.get("cron") or "0 8 * * *"
                 self._base_url = (config.get("base_url") or self._base_url).rstrip("/")
@@ -113,8 +113,7 @@ class JuyingSign(_PluginBase):
                     "status": "跳过: 今日已签到",
                     "message": self._get_last_success_message(),
                 }
-                if self._notify:
-                    self._send_sign_notification(sign_dict)
+                self._send_sign_notification(sign_dict)
                 return sign_dict
 
             if not self._cookie:
@@ -126,8 +125,7 @@ class JuyingSign(_PluginBase):
                         "message": f"请填写聚影登录 Cookie，或配置用户名密码自动登录获取 Cookie。{login_message}",
                     }
                     self._save_sign_history(sign_dict)
-                    if self._notify:
-                        self._send_sign_notification(sign_dict)
+                    self._send_sign_notification(sign_dict)
                     return sign_dict
 
             success, message = self._signin_base()
@@ -154,12 +152,10 @@ class JuyingSign(_PluginBase):
                     message = f"{message}；自动登录失败: {login_message}"
 
             if retry_count < self._max_retries:
-                if self._notify:
-                    self.post_message(
-                        mtype=NotificationType.SiteMessage,
-                        title="【聚影签到重试】",
-                        text=f"签到失败: {message}，{self._retry_interval} 秒后进行第 {retry_count + 1} 次重试",
-                    )
+                self._post_notification(
+                    title="【聚影签到重试】",
+                    text=f"签到失败: {message}，{self._retry_interval} 秒后进行第 {retry_count + 1} 次重试",
+                )
                 time.sleep(self._retry_interval)
                 return self.sign(retry_count + 1)
 
@@ -261,6 +257,7 @@ class JuyingSign(_PluginBase):
 
     def _send_sign_notification(self, sign_dict: Dict[str, Any]):
         if not self._notify:
+            logger.info("聚影签到通知开关未开启，跳过发送")
             return
 
         status = sign_dict.get("status", "未知")
@@ -279,19 +276,52 @@ class JuyingSign(_PluginBase):
 
         text = (
             f"执行结果\n"
+            f"━━━━━━━━━━\n"
             f"时间：{sign_time}\n"
             f"方式：{trigger_type}\n"
             f"状态：{status}\n"
+            f"━━━━━━━━━━\n"
+            f"签到信息\n"
             f"详情：{message}\n"
             f"奖励积分：{points}\n"
-            f"连续天数：{days}"
+            f"连续天数：{days}\n"
+            f"━━━━━━━━━━"
         )
+        if "失败" in status:
+            text = (
+                f"{text}\n"
+                f"可能的解决方法\n"
+                f"检查 Cookie 是否有效\n"
+                f"确认账号密码是否能正常登录\n"
+                f"查看站点是否正常访问"
+            )
 
-        self.post_message(
-            mtype=NotificationType.SiteMessage,
-            title=title,
-            text=text,
-        )
+        self._post_notification(title=title, text=text)
+
+    def _post_notification(self, title: str, text: str):
+        if not self._notify:
+            logger.info(f"聚影通知开关未开启，跳过发送: {title}")
+            return
+        try:
+            logger.info(f"发送聚影通知: {title}")
+            self.post_message(
+                mtype=NotificationType.SiteMessage,
+                title=title,
+                text=text,
+            )
+            logger.info(f"聚影通知已提交: {title}")
+        except Exception as e:
+            logger.error(f"发送聚影通知失败: {e}", exc_info=True)
+
+    @staticmethod
+    def _as_bool(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "yes", "y", "on", "开启", "是")
+        return bool(value)
 
     def get_state(self) -> bool:
         logger.info(f"juyingsign 状态: {self._enabled}")
