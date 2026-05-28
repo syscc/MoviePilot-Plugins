@@ -1,11 +1,15 @@
 __all__ = ["JuyingPlaywrightClient", "JuyingBrowserError"]
 
 from contextlib import contextmanager
+from http.cookies import SimpleCookie
 import json
 from socket import AF_INET, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET, socket
 from sys import platform
 from typing import Any, Dict, Iterator, Optional, Tuple
+from urllib.error import HTTPError
 from urllib.parse import unquote, urlparse
+from urllib.request import Request, build_opener, HTTPCookieProcessor, ProxyHandler, urlopen
+from http.cookiejar import CookieJar
 
 try:
     from cloakbrowser import launch_context as cloak_launch_context
@@ -85,6 +89,13 @@ class JuyingPlaywrightClient:
         if parsed.password:
             proxy["password"] = unquote(parsed.password)
         return proxy
+
+    @staticmethod
+    def _urllib_proxy_handler() -> Optional[ProxyHandler]:
+        raw = JuyingPlaywrightClient._proxy_url_from_settings()
+        if not raw:
+            return None
+        return ProxyHandler({"http": raw, "https": raw})
 
     @staticmethod
     @contextmanager
@@ -235,6 +246,90 @@ class JuyingPlaywrightClient:
         return "; ".join(parts)
 
     @staticmethod
+    def _cookiejar_to_str(cookie_jar: CookieJar) -> str:
+        parts = []
+        for cookie in cookie_jar:
+            parts.append(f"{cookie.name}={cookie.value}")
+        return "; ".join(parts)
+
+    @staticmethod
+    def _set_cookie_headers_to_str(headers: list[str]) -> str:
+        cookie = SimpleCookie()
+        for header in headers or []:
+            cookie.load(header)
+        return "; ".join(f"{name}={morsel.value}" for name, morsel in cookie.items())
+
+    def _storage_state_from_token(self, token: str) -> str:
+        if not token:
+            return ""
+        expires_ms = 7 * 24 * 60 * 60 * 1000
+        state = {
+            "cookies": [],
+            "origins": [{
+                "origin": self.base_url,
+                "localStorage": [
+                    {"name": "app_user_token", "value": token},
+                    {"name": "app_user_token_expires", "value": str(self._now_ms() + expires_ms)},
+                ],
+            }],
+        }
+        return json.dumps(state, ensure_ascii=False)
+
+    @staticmethod
+    def _now_ms() -> int:
+        import time
+        return int(time.time() * 1000)
+
+    def _login_by_api_cookie(self, username: str, password: str) -> Tuple[bool, str, str, str]:
+        cookie_jar = CookieJar()
+        handlers = [HTTPCookieProcessor(cookie_jar)]
+        proxy = JuyingPlaywrightClient._urllib_proxy_handler()
+        if proxy:
+            handlers.append(proxy)
+        opener = build_opener(*handlers)
+
+        payload = json.dumps({"username": username, "password": password}).encode("utf-8")
+        request = Request(
+            f"{self.base_url}/api/app/login/",
+            data=payload,
+            method="POST",
+            headers={
+                "User-Agent": self._UA,
+                "Accept": "application/json, text/plain, */*",
+                "Content-Type": "application/json",
+                "X-Requested-With": "XMLHttpRequest",
+                "Origin": self.base_url,
+                "Referer": f"{self.base_url}{self.login_path}",
+            },
+        )
+        try:
+            response = opener.open(request, timeout=30)
+            with response:
+                body = response.read().decode("utf-8", errors="replace")
+                headers = response.headers
+                status = response.status
+        except HTTPError as err:
+            body = err.read().decode("utf-8", errors="replace")
+            headers = err.headers
+            status = err.code
+
+        try:
+            data = json.loads(body or "{}")
+        except Exception:
+            data = {}
+        if status >= 400 or data.get("status") == "error":
+            return False, "", "", str(data.get("message") or body[:200] or f"登录接口 HTTP {status}")
+
+        cookie_str = self._cookiejar_to_str(cookie_jar)
+        if not cookie_str:
+            cookie_str = self._set_cookie_headers_to_str(headers.get_all("Set-Cookie") or [])
+        if not cookie_str:
+            return False, "", "", "登录接口未返回 Cookie"
+
+        storage_state = self._storage_state_from_token(str(data.get("token") or ""))
+        return True, cookie_str, storage_state, "登录成功"
+
+    @staticmethod
     def _extract_page_message(page: Any) -> str:
         selectors = [
             ".n-message",
@@ -318,6 +413,10 @@ class JuyingPlaywrightClient:
     def login(self, username: str, password: str) -> Tuple[bool, str, str, str]:
         if not username or not password:
             return False, "", "", "未配置用户名或密码"
+
+        success, cookie_str, storage_state, message = self._login_by_api_cookie(username, password)
+        if success:
+            return True, cookie_str, storage_state, message
 
         try:
             with JuyingPlaywrightClient._browser_runtime() as playwright:

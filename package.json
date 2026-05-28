@@ -3,12 +3,13 @@
     "name": "聚影签到",
     "description": "自动完成聚影每日签到，支持账号密码登录获取 Cookie、定时任务、失败重试和历史记录。",
     "labels": "聚影,签到,站点",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/juyingsign.png",
     "author": "syscc",
     "level": 2,
     "v2": true,
     "history": {
+      "1.0.2": "优化聚影账号密码自动登录，直接获取站点 Cookie 并保存页面登录态。",
       "1.0.1": "修正聚影登录方式，使用账号密码自动获取 Cookie 并通过 Cookie 完成签到。",
       "1.0.0": "初始版本，支持账号密码自动登录、Cookie 登录态、定时签到、失败重试和历史记录。"
     }
