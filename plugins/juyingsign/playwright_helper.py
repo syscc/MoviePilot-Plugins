@@ -42,6 +42,8 @@ class JuyingPlaywrightClient:
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     )
+    _NAVIGATION_TIMEOUT = 60000
+    _NETWORK_IDLE_TIMEOUT = 20000
 
     def __init__(self, base_url: str = "https://share.huamucang.top", headless: bool = True) -> None:
         self.base_url = base_url.rstrip("/")
@@ -179,6 +181,38 @@ class JuyingPlaywrightClient:
         )
         return browser, context
 
+    def _goto_page(self, page: Any, url: str, wait_until: str = "domcontentloaded") -> Any:
+        last_error: Optional[Exception] = None
+        for attempt in range(1, 3):
+            try:
+                return page.goto(
+                    url,
+                    wait_until=wait_until,
+                    timeout=JuyingPlaywrightClient._NAVIGATION_TIMEOUT,
+                )
+            except PlaywrightTimeoutError as err:
+                last_error = err
+                if attempt >= 2:
+                    raise
+                try:
+                    page.wait_for_timeout(2000)
+                except Exception:
+                    pass
+                try:
+                    page.goto("about:blank", timeout=10000)
+                except Exception:
+                    pass
+        if last_error:
+            raise last_error
+        return None
+
+    @staticmethod
+    def _wait_network_idle(page: Any, timeout: int = _NETWORK_IDLE_TIMEOUT) -> None:
+        try:
+            page.wait_for_load_state("networkidle", timeout=timeout)
+        except Exception:
+            pass
+
     def _add_cookies(self, context: Any, cookie_str: str) -> None:
         cookies = JuyingPlaywrightClient._parse_cookie_str(cookie_str)
         if not cookies:
@@ -210,7 +244,7 @@ class JuyingPlaywrightClient:
 
         page = context.new_page()
         try:
-            page.goto(self.base_url, wait_until="domcontentloaded", timeout=30000)
+            self._goto_page(page, self.base_url)
             origin = self.base_url
             origins = state.get("origins") or []
             for item in origins:
@@ -443,12 +477,8 @@ class JuyingPlaywrightClient:
                         self._add_cookies(context, cookie_str)
                         self._restore_storage_state(context, storage_state)
                         page = context.new_page()
-                        page.goto(
-                            f"{self.base_url}{self.checkin_path}",
-                            wait_until="domcontentloaded",
-                            timeout=30000,
-                        )
-                        page.wait_for_load_state("networkidle", timeout=30000)
+                        self._goto_page(page, f"{self.base_url}{self.checkin_path}")
+                        self._wait_network_idle(page)
 
                         if "/login" in page.url:
                             return False, "Cookie 无效或登录已过期，站点跳转到登录页"
@@ -503,11 +533,7 @@ class JuyingPlaywrightClient:
                     browser, context = self._make_context(playwright, proxy)
                     try:
                         page = context.new_page()
-                        page.goto(
-                            f"{self.base_url}{self.login_path}",
-                            wait_until="domcontentloaded",
-                            timeout=30000,
-                        )
+                        self._goto_page(page, f"{self.base_url}{self.login_path}")
                         page.wait_for_selector("input", timeout=15000)
 
                         if not self._fill_login_form(page, username, password):
@@ -528,15 +554,8 @@ class JuyingPlaywrightClient:
                                 return False, "", "", page_text
                             return False, "", "", page_text or "登录后仍停留在登录页"
 
-                        page.goto(
-                            f"{self.base_url}{self.checkin_path}",
-                            wait_until="domcontentloaded",
-                            timeout=30000,
-                        )
-                        try:
-                            page.wait_for_load_state("networkidle", timeout=15000)
-                        except Exception:
-                            pass
+                        self._goto_page(page, f"{self.base_url}{self.checkin_path}")
+                        self._wait_network_idle(page, timeout=15000)
                         if "/login" in page.url:
                             page_text = self._extract_page_message(page)
                             return False, "", "", page_text or "账号密码登录未保持有效登录态"

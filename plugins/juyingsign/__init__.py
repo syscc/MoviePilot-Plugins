@@ -1,6 +1,6 @@
 """
 聚影签到插件
-版本: 1.0.9
+版本: 1.0.10
 作者: syscc
 功能:
 - 自动访问聚影每日签到页并点击“立即签到”
@@ -37,7 +37,7 @@ class JuyingSign(_PluginBase):
     plugin_name = "聚影签到"
     plugin_desc = "自动完成聚影每日签到，支持账号密码登录、失败重试和历史记录"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/juyingsign.png"
-    plugin_version = "1.0.9"
+    plugin_version = "1.0.10"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "juyingsign_"
