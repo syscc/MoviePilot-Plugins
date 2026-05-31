@@ -1,6 +1,6 @@
 """
 聚影签到插件
-版本: 1.0.10
+版本: 1.1.0
 作者: syscc
 功能:
 - 自动访问聚影每日签到页并点击“立即签到”
@@ -37,7 +37,7 @@ class JuyingSign(_PluginBase):
     plugin_name = "聚影签到"
     plugin_desc = "自动完成聚影每日签到，支持账号密码登录、失败重试和历史记录"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/juyingsign.png"
-    plugin_version = "1.0.10"
+    plugin_version = "1.1.0"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "juyingsign_"
@@ -186,6 +186,13 @@ class JuyingSign(_PluginBase):
             if not self._cookie:
                 login_ok, login_message = self._auto_login()
                 if not login_ok:
+                    if self._is_transient_error(login_message) and retry_count < self._max_retries:
+                        logger.info(
+                            f"聚影自动登录遇到临时网络异常，account={self._current_account_name}, "
+                            f"retry={retry_count}, {self._retry_interval_minutes} 分钟后静默重试: {login_message}"
+                        )
+                        time.sleep(self._retry_interval)
+                        return self._sign_current_account(retry_count + 1)
                     sign_dict = {
                         "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
                         "status": "签到失败: 未配置 Cookie",
@@ -202,6 +209,14 @@ class JuyingSign(_PluginBase):
                 self._save_sign_history(sign_dict)
                 self._send_sign_notification(sign_dict)
                 return sign_dict
+
+            if self._is_transient_error(message) and retry_count < self._max_retries:
+                logger.info(
+                    f"聚影临时网络异常，account={self._current_account_name}, "
+                    f"retry={retry_count}, {self._retry_interval_minutes} 分钟后静默重试: {message}"
+                )
+                time.sleep(self._retry_interval)
+                return self._sign_current_account(retry_count + 1)
 
             logger.error(f"聚影签到失败: {message}")
             if self._is_auth_error(message):
@@ -973,6 +988,29 @@ class JuyingSign(_PluginBase):
         return any(
             keyword in (message or "")
             for keyword in ("Cookie", "登录", "过期", "失效", "未授权", "Unauthorized", "/login")
+        )
+
+    @staticmethod
+    def _is_transient_error(message: str) -> bool:
+        return any(
+            keyword in (message or "").lower()
+            for keyword in (
+                "timeout",
+                "timed out",
+                "dns",
+                "failed to query",
+                "failed to receive reply",
+                "remote end closed",
+                "connection reset",
+                "connection aborted",
+                "connection refused",
+                "temporarily unavailable",
+                "network",
+                "net::",
+                "econnreset",
+                "etimedout",
+                "enotfound",
+            )
         )
 
     @staticmethod

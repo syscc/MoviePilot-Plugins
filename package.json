@@ -3,7 +3,7 @@
     "name": "聚影签到",
     "description": "自动完成聚影每日签到，支持账号密码登录获取 Cookie、定时任务、失败重试和历史记录。",
     "labels": "聚影,签到,站点",
-    "version": "1.0.10",
+    "version": "1.1.0",
     "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/juyingsign.png",
     "author": "syscc",
     "homepage": "https://github.com/syscc/MoviePilot-Plugins",
@@ -11,6 +11,7 @@
     "level": 2,
     "v2": true,
     "history": {
+      "1.1.0": "临时 DNS、超时等网络异常改为静默重试，避免重试成功前发送误导性失败通知。",
       "1.0.10": "优化页面加载超时容错，减少网络抖动导致的首次签到失败。",
       "1.0.9": "支持多账号串行轮询签到、账号间隔、失败分钟级重试、独立历史记录和通知。",
       "1.0.8": "签到通知增加用户名和用户等级展示。",
