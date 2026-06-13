@@ -1,8 +1,8 @@
 from urllib.parse import quote
 
 from app.log import logger
-from app.plugins.mergemessagenotify.channel import Channel
-from app.plugins.mergemessagenotify.util import TemplateUtil
+from app.plugins.messagenotify.channel import Channel
+from app.plugins.messagenotify.util import TemplateUtil
 from app.schemas.types import NotificationType
 
 

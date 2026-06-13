@@ -6,7 +6,7 @@ import hmac
 import hashlib
 import base64
 
-from app.plugins.mergemessagenotify.channel.custom import CustomChannel
+from app.plugins.messagenotify.channel.custom import CustomChannel
 from app.schemas.types import NotificationType
 from app.log import logger
 

@@ -1,22 +1,22 @@
 from typing import Tuple, List, Dict, Any
 import requests
 
-from app.plugins.mergemessagenotify.channel.custom import CustomChannel
+from app.plugins.messagenotify.channel.custom import CustomChannel
 from app.schemas.types import NotificationType
 from app.log import logger
 
 
-class IYUUChannel(CustomChannel):
+class ChanifyChannel(CustomChannel):
     """
-    爱语飞飞渠道
+    Chanify渠道
     """
 
     # 组件key
-    comp_key: str = f"{CustomChannel.comp_key}.iyuu"
+    comp_key: str = f"{CustomChannel.comp_key}.chanify"
     # 组件名称
-    comp_name: str = "爱语飞飞"
+    comp_name: str = "Chanify"
     # 组件顺序
-    comp_order: int = CustomChannel.comp_order * 100 + 1
+    comp_order: int = CustomChannel.comp_order * 100 + 3
 
     # 配置相关
     # 组件缺省配置
@@ -38,15 +38,28 @@ class IYUUChannel(CustomChannel):
                 'component': 'VCol',
                 'props': {
                     'cols': 12,
-                    'xxl': 12, 'xl': 12, 'lg': 12, 'md': 12, 'sm': 12, 'xs': 12
+                    'xxl': 6, 'xl': 6, 'lg': 6, 'md': 6, 'sm': 6, 'xs': 12
                 },
                 'content': [{
                     'component': 'VTextField',
                     'props': {
                         'model': 'token',
-                        'label': 'IYUU令牌',
-                        'placeholder': 'IYUUxxx',
-                        'hint': '必填。请前往爱语飞飞官网获取令牌：https://iyuu.cn'
+                        'label': '推送令牌',
+                        'hint': '必填。'
+                    }
+                }]
+            }, {
+                'component': 'VCol',
+                'props': {
+                    'cols': 12,
+                    'xxl': 6, 'xl': 6, 'lg': 6, 'md': 6, 'sm': 6, 'xs': 12
+                },
+                'content': [{
+                    'component': 'VSwitch',
+                    'props': {
+                        'model': 'sound',
+                        'label': '启用铃声',
+                        'hint': '收到消息时是否响铃。'
                     }
                 }]
             }]
@@ -61,7 +74,7 @@ class IYUUChannel(CustomChannel):
         检查配置
         """
         if not self.get_config_item(config_key="token"):
-            logger.warn(f"配置检查不通过: channel = {self.comp_name}, IYUU令牌无效")
+            logger.warn(f"配置检查不通过: channel = {self.comp_name}, 推送令牌无效")
             return False
         return True
 
@@ -70,20 +83,21 @@ class IYUUChannel(CustomChannel):
         构造url
         """
         token = self.get_config_item(config_key="token")
-        return f"https://iyuu.cn/{token}.send"
+        return f"https://api.chanify.net/v1/sender/{token}"
 
-    def __build_params(self, title: str, text: str) -> dict:
+    def __build_json(self, title: str, text: str) -> dict:
         """
-        构造请求参数
+        构造请求json
         """
-        # params
-        params = {
-            "text": title
+        # json
+        json = {
+            "title": title,
+            "text": text,
         }
-        # desp
-        desp = text or title
-        params["desp"] = desp
-        return params
+        # sound
+        if self.get_config_item(config_key="sound"):
+            json["sound"] = 1
+        return json
 
     def send_message(self, title: str, text: str, type: NotificationType = None, ext_info: dict = {}) -> bool:
         """
@@ -94,19 +108,16 @@ class IYUUChannel(CustomChannel):
         if (type and enable_notify_types and type.name not in enable_notify_types):
             logger.warn(f"发送消息中止: channel = {self.comp_name}, type = {type_str}, 消息类型不受支持")
             return False
-        if not title:
-            logger.warn(f"发送消息中止: channel = {self.comp_name}, type = {type_str}, 消息标题为空")
-            return False
         if not self.__check_config():
             return False
         send_url = self.__build_url()
-        params = self.__build_params(title=title, text=text)
-        res = requests.post(url=send_url, params=params)
+        json = self.__build_json(title=title, text=text)
+        res = requests.post(url=send_url, json=json)
         res_json = res.json() or {}
         if res.ok or res_json:
-            code = res_json.get("errcode")
-            message = res_json.get("errmsg")
-            if code == 0:
+            code = res_json.get("res")
+            message = res_json.get("msg")
+            if not code:
                 logger.info(f"发送消息成功: channel = {self.comp_name}, type = {type_str}")
                 return True
             else:

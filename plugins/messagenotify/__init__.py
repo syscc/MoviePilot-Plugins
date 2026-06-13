@@ -4,19 +4,19 @@ from app.core.event import eventmanager, Event
 from app.helper.module import ModuleHelper
 from app.log import logger
 from app.plugins import _PluginBase
-from app.plugins.mergemessagenotify.channel import Channel
-from app.plugins.mergemessagenotify.channel.custom import CustomChannel
-from app.plugins.mergemessagenotify.module import ChannelStrategy
+from app.plugins.messagenotify.channel import Channel
+from app.plugins.messagenotify.channel.custom import CustomChannel
+from app.plugins.messagenotify.module import ChannelStrategy
 from app.schemas.types import EventType, NotificationType
 
 
-class MergeMessageNotify(_PluginBase):
+class MessageNotify(_PluginBase):
     # 插件名称
-    plugin_name = "聚合消息通知"
+    plugin_name = "消息通知"
     # 插件描述
     plugin_desc = "消息通知，一个插件就够了。"
     # 插件图标
-    plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/mergemessagenotify.png"
+    plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/messagenotify.png"
     # 插件版本
     plugin_version = "0.0.1"
     # 插件作者
@@ -24,7 +24,7 @@ class MergeMessageNotify(_PluginBase):
     # 作者主页
     author_url = "https://github.com/syscc"
     # 插件配置项ID前缀
-    plugin_config_prefix = "com.hotlcc.mergemessagenotify."
+    plugin_config_prefix = "com.syscc.messagenotify."
     # 加载顺序
     plugin_order = 66
     # 可使用的用户级别
@@ -304,10 +304,10 @@ class MergeMessageNotify(_PluginBase):
         """
         # 加载所有组件类
         comp_types: List[Type[Channel]] = ModuleHelper.load(
-            package_path="app.plugins.mergemessagenotify.channel",
+            package_path="app.plugins.messagenotify.channel",
             filter_func=lambda _, obj: self.__filter_comp_type(comp_type=obj)
         ) + ModuleHelper.load(
-            package_path="app.plugins.mergemessagenotify.channel.custom",
+            package_path="app.plugins.messagenotify.channel.custom",
             filter_func=lambda _, obj: self.__filter_comp_type(comp_type=obj)
         )
         # 去重

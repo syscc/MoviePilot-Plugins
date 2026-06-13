@@ -9,7 +9,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding as lib_padding
 from cryptography.exceptions import InvalidTag
 
-from app.plugins.mergemessagenotify.channel.custom import CustomChannel
+from app.plugins.messagenotify.channel.custom import CustomChannel
 from app.schemas.types import NotificationType
 from app.log import logger
 from app.core.config import settings

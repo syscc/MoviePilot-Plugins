@@ -25,13 +25,13 @@
       "1.0.0": "初始版本，支持账号密码自动登录、Cookie 登录态、定时签到、失败重试和历史记录。"
     }
   },
-  "MergeMessageNotify": {
-    "name": "聚合消息通知",
+  "MessageNotify": {
+    "name": "消息通知",
     "description": "消息通知，一个插件就够了。",
     "labels": "消息通知",
     "version": "0.0.1",
     "release": true,
-    "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/mergemessagenotify.png",
+    "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/messagenotify.png",
     "author": "syscc",
     "homepage": "https://github.com/syscc/MoviePilot-Plugins",
     "repository": "https://github.com/syscc/MoviePilot-Plugins",

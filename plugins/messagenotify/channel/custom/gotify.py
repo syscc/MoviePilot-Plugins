@@ -1,22 +1,23 @@
 from typing import Tuple, List, Dict, Any
 import requests
 
-from app.plugins.mergemessagenotify.channel.custom import CustomChannel
+from app.plugins.messagenotify.channel.custom import CustomChannel
 from app.schemas.types import NotificationType
 from app.log import logger
+from app.core.config import settings
 
 
-class ChanifyChannel(CustomChannel):
+class GotifyChannel(CustomChannel):
     """
-    Chanify渠道
+    Gotify渠道 https://gotify.net/
     """
 
     # 组件key
-    comp_key: str = f"{CustomChannel.comp_key}.chanify"
+    comp_key: str = f"{CustomChannel.comp_key}.gotify"
     # 组件名称
-    comp_name: str = "Chanify"
+    comp_name: str = "Gotify"
     # 组件顺序
-    comp_order: int = CustomChannel.comp_order * 100 + 3
+    comp_order: int = CustomChannel.comp_order * 100 + 8
 
     # 配置相关
     # 组件缺省配置
@@ -43,8 +44,23 @@ class ChanifyChannel(CustomChannel):
                 'content': [{
                     'component': 'VTextField',
                     'props': {
+                        'model': 'server_url',
+                        'label': '服务器地址',
+                        'placeholder': 'http://127.0.0.1:8080',
+                        'hint': '必填。'
+                    }
+                }]
+            }, {
+                'component': 'VCol',
+                'props': {
+                    'cols': 12,
+                    'xxl': 6, 'xl': 6, 'lg': 6, 'md': 6, 'sm': 6, 'xs': 12
+                },
+                'content': [{
+                    'component': 'VTextField',
+                    'props': {
                         'model': 'token',
-                        'label': '推送令牌',
+                        'label': 'Token',
                         'hint': '必填。'
                     }
                 }]
@@ -57,9 +73,9 @@ class ChanifyChannel(CustomChannel):
                 'content': [{
                     'component': 'VSwitch',
                     'props': {
-                        'model': 'sound',
-                        'label': '启用铃声',
-                        'hint': '收到消息时是否响铃。'
+                        'model': 'enable_proxy',
+                        'label': '使用代理',
+                        'hint': '推送消息时是否使用网络代理。'
                     }
                 }]
             }]
@@ -73,8 +89,13 @@ class ChanifyChannel(CustomChannel):
         """
         检查配置
         """
+        server_url: str = self.get_config_item(config_key="server_url")
+        server_url = server_url.rstrip("/") if server_url else None
+        if not server_url:
+            logger.warn(f"配置检查不通过: channel = {self.comp_name}, 服务器地址无效")
+            return False
         if not self.get_config_item(config_key="token"):
-            logger.warn(f"配置检查不通过: channel = {self.comp_name}, 推送令牌无效")
+            logger.warn(f"配置检查不通过: channel = {self.comp_name}, Token无效")
             return False
         return True
 
@@ -82,21 +103,52 @@ class ChanifyChannel(CustomChannel):
         """
         构造url
         """
+        server_url: str = self.get_config_item(config_key="server_url")
+        server_url = server_url.rstrip("/")
         token = self.get_config_item(config_key="token")
-        return f"https://api.chanify.net/v1/sender/{token}"
+        return f"{server_url}/message?token={token}"
 
-    def __build_json(self, title: str, text: str) -> dict:
+    def __build_json(self, title: str, text: str, ext_info: dict = {}) -> dict:
         """
         构造请求json
         """
+        title = title or ""
+        text = text or ""
+        ext_info = ext_info or {}
+        # image
+        image = ext_info.get("image")
+        # message
+        message = f"{text}\n![]({image})" if image else text
+        # contnetType
+        contentType = "text/markdown" if image else "text/plain"
+        # client::notification
+        notification = {}
+        # link
+        link = ext_info.get("link")
+        if link:
+            notification.update({
+                "click": {
+                    "url": link
+                }
+            })
+        if image:
+            notification.update({
+                "bigImageUrl": image
+            })
+        # extras
+        extras = {
+            "client::display": {
+                "contentType": contentType
+            },
+            "client::notification": notification
+        }
         # json
         json = {
             "title": title,
-            "text": text,
+            "message": message,
+            "priority": 2,
+            "extras": extras
         }
-        # sound
-        if self.get_config_item(config_key="sound"):
-            json["sound"] = 1
         return json
 
     def send_message(self, title: str, text: str, type: NotificationType = None, ext_info: dict = {}) -> bool:
@@ -112,11 +164,12 @@ class ChanifyChannel(CustomChannel):
             return False
         send_url = self.__build_url()
         json = self.__build_json(title=title, text=text)
-        res = requests.post(url=send_url, json=json)
+        proxies = settings.PROXY if self.get_config_item(config_key="enable_proxy") else None
+        res = requests.post(url=send_url, json=json, proxies=proxies)
         res_json = res.json() or {}
         if res.ok or res_json:
-            code = res_json.get("res")
-            message = res_json.get("msg")
+            code = res_json.get("errorCode")
+            message = res_json.get("errorDescription")
             if not code:
                 logger.info(f"发送消息成功: channel = {self.comp_name}, type = {type_str}")
                 return True
