@@ -1,14 +1,15 @@
-# 聚影签到插件
+# MoviePilot 第三方插件
 
-这是一个用于 MoviePilot 的第三方插件仓库，目前仅维护一个插件：`JuyingSign`。
+这是一个用于 MoviePilot 的第三方插件仓库，目前维护 `JuyingSign` 和 `MergeMessageNotify`。
 
-插件会使用账号密码自动登录获取聚影 Cookie，或使用已填写的 Cookie 访问聚影签到页并点击“立即签到”，支持多账号串行轮询、定时执行、手动执行一次、失败重试、消息通知和签到历史展示。
+其中聚影签到插件会使用账号密码自动登录获取聚影 Cookie，或使用已填写的 Cookie 访问聚影签到页并点击“立即签到”，支持多账号串行轮询、定时执行、手动执行一次、失败重试、消息通知和签到历史展示。
 
 ## 插件列表
 
 | 插件 | 目录 | 说明 |
 | --- | --- | --- |
 | 聚影签到 | `plugins/juyingsign` | 自动访问 `https://share.huamucang.top/checkin` 完成每日签到 |
+| 聚合消息通知 | `plugins/mergemessagenotify` | 聚合多个自定义消息通知渠道 |
 
 ## 功能
 
@@ -27,8 +28,8 @@
 
 1. 在 MoviePilot 插件市场中添加本仓库地址。
 2. 同步插件市场。
-3. 找到“聚影签到”并安装。
-4. 进入插件配置页面填写用户名/密码或 Cookie，并设置签到周期。
+3. 找到需要的插件并安装。
+4. 进入插件配置页面填写配置并保存。
 
 ## 配置说明
 
@@ -116,12 +117,19 @@
 ```text
 MoviePilot-Plugins/
 ├── icons/
-│   └── juyingsign.png
+│   ├── juyingsign.png
+│   └── mergemessagenotify.png
 ├── plugins/
-│   └── juyingsign/
+│   ├── juyingsign/
+│   │   ├── __init__.py
+│   │   ├── playwright_helper.py
+│   │   └── requirements.txt
+│   └── mergemessagenotify/
 │       ├── __init__.py
-│       ├── playwright_helper.py
-│       └── requirements.txt
+│       ├── channel/
+│       ├── module.py
+│       ├── requirements.txt
+│       └── util.py
 ├── package.json
 └── README.md
 ```

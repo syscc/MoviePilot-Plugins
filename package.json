@@ -24,5 +24,40 @@
       "1.0.1": "修正聚影登录方式，使用账号密码自动获取 Cookie 并通过 Cookie 完成签到。",
       "1.0.0": "初始版本，支持账号密码自动登录、Cookie 登录态、定时签到、失败重试和历史记录。"
     }
+  },
+  "MergeMessageNotify": {
+    "name": "聚合消息通知",
+    "description": "消息通知，一个插件就够了。",
+    "labels": "消息通知",
+    "version": "0.0.1",
+    "release": true,
+    "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/mergemessagenotify.png",
+    "author": "syscc",
+    "homepage": "https://github.com/syscc/MoviePilot-Plugins",
+    "repository": "https://github.com/syscc/MoviePilot-Plugins",
+    "level": 1,
+    "v2": true,
+    "history": {
+      "0.0.1": "初始引入聚合消息通知插件，放宽 cryptography 依赖版本约束以兼容主程序环境。",
+      "v1.18": "优化tabs标题大小写。",
+      "v1.17": "新增Apprise通知渠道（未经测试，请自测，有问题请提iss）。升级后可能需要重启MP！",
+      "v1.16": "升级最新推送加密方式。升级后可能需要重启MP！",
+      "v1.15": "尝试修复钉钉渠道通知不换行问题（未经测试，请自测）。升级后可能需要重启MP！",
+      "v1.14": "邮件通知添加Date",
+      "v1.13": "Ntfy支持关闭markdown",
+      "v1.12": "修复http模块问题。更新后可能需要重启MP。",
+      "v1.11": "Email渠道支持配置SMTP加密类型。升级后可能需要重启MP！",
+      "v1.10": "修复Email发送报错的问题。升级后可能需要重启MP！",
+      "v1.9": "修复Email发送报错的问题。升级后可能需要重启MP！",
+      "v1.8": "优化钉钉渠道消息内容；新增PushMe消息渠道（未经测试，请自测，有问题提issue）。升级后可能需要重启MP！",
+      "v1.7": "修复在MPv2中消息类型不生效的问题。",
+      "v1.6": "移除对系统消息渠道的管理并兼容 MP V2。升级后可能需要重启MP！",
+      "v1.5": "新增Gotify消息渠道。升级后可能需要重启MP！",
+      "v1.4": "OneBot-11和http渠道模板支持Mako语法。插件升级后需要重启MP！！！",
+      "v1.3": "优化OneBot-11消息。插件升级后需要重启MP！！！",
+      "v1.2": "新增OneBot-11消息渠道。插件升级后需要重启MP！！！",
+      "v1.1": "支持配置渠道策略；修复系统渠道配置修改后运行时不生效的问题。插件升级后需要重启MP！！！",
+      "v1.0": "初始版本。"
+    }
   }
 }
