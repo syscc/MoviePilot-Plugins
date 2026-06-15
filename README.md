@@ -1,20 +1,22 @@
 # MoviePilot 第三方插件
 
-这是一个用于 MoviePilot 的第三方插件仓库，目前维护 `JuyingSign` 和 `MessageNotify`。
+这是一个用于 MoviePilot 的第三方插件仓库，目前维护 `AggregateSign` 和 `MessageNotify`。
 
-其中聚影签到插件会使用账号密码自动登录获取聚影 Cookie，或使用已填写的 Cookie 访问聚影签到页并点击“立即签到”，支持多账号串行轮询、定时执行、手动执行一次、失败重试、消息通知和签到历史展示。
+其中聚合签到插件使用 JSON 多账号配置统一管理多个站点，当前支持聚影和癫影。聚影支持账号密码自动登录或 Cookie 登录态，癫影只支持手动登录后填写 Cookie。
 
 ## 插件列表
 
 | 插件 | 目录 | 说明 |
 | --- | --- | --- |
-| 聚影签到 | `plugins/juyingsign` | 自动访问 `https://share.huamucang.top/checkin` 完成每日签到 |
+| 聚合签到 | `plugins/aggregatesign` | 聚合多个站点的每日签到，支持多账号、多站点和多签到方式 |
 | 消息通知 | `plugins/messagenotify` | 聚合多个自定义消息通知渠道 |
 
 ## 功能
 
-- 用户名/邮箱和密码自动登录
+- 聚影账号密码自动登录
 - Cookie 登录态签到
+- 聚影、癫影多站点签到
+- 癫影普通签到和运气签到方式配置
 - 多账号按配置顺序串行轮询签到
 - 多账号独立保存 Cookie、登录态、历史和通知
 - 定时任务签到
@@ -38,78 +40,77 @@
 | 启用插件 | 开启后注册定时签到任务 |
 | 开启通知 | 签到成功、重复签到、失败和重试时发送站内通知 |
 | 立即运行一次 | 保存配置后立即执行一次签到 |
-| 多账号配置 | JSON 数组。填写后优先使用多账号配置，单账号字段仅作为备用配置保留 |
-| 站点 Cookie | 聚影登录后的完整 Cookie，可选 |
-| 用户名/邮箱 | 用于自动登录获取 Cookie |
-| 密码 | 用于自动登录获取 Cookie |
-| 站点地址 | 默认 `https://share.huamucang.top` |
+| 多账号配置 | JSON 数组。唯一账号配置入口，支持 `site`、`name`、`username`、`password`、`cookie`、`methods` |
 | 签到周期 | Cron 表达式，默认每天 08:00 |
 | 最大重试次数 | 签到失败后的重试次数 |
 | 失败重试间隔 | 单个账号签到失败后，等待多少分钟再重试 |
 | 账号轮询间隔 | 多账号签到时，两个账号之间等待多少秒 |
 | 历史保留天数 | 签到历史记录保留时间 |
 
+## 支持站点
+
+| site | 站点 | 登录方式 | 签到方式 |
+| --- | --- | --- | --- |
+| `juying` | `https://share.huamucang.top` | 账号密码自动登录或 Cookie | `normal` |
+| `dian115` | `https://m.dian115.com` | 仅 Cookie | `normal` 普通签到、`lucky` 运气签到 |
+
 ## 登录方式
 
-推荐填写“用户名/邮箱”和“密码”，插件会打开聚影登录页自动登录获取 Cookie，并在 Cookie 失效时尝试重新登录。
+聚影可以填写 `username` 和 `password`，插件会自动登录获取 Cookie；也可以只填写 Cookie。
 
-也可以只填写 Cookie：
+癫影登录接口启用了 Turnstile 人机验证，不支持账号密码自动登录。请手动登录后复制 Cookie，填入 `cookie` 字段。
 
-1. 在浏览器中打开 `https://share.huamucang.top` 并登录。
+复制 Cookie 的通用步骤：
+
+1. 在浏览器中打开对应站点并登录。
 2. 打开浏览器开发者工具。
 3. 在 Network 或 Application/Storage 中复制当前站点的完整 Cookie。
-4. 粘贴到插件配置的“站点 Cookie”字段。
+4. 粘贴到多账号 JSON 的 `cookie` 字段。
 
-如果没有填写用户名和密码，Cookie 失效后需要重新复制新的 Cookie。
+Cookie 失效后需要重新手动复制新的 Cookie。
 
 ## 多账号配置
 
-在“多账号配置”中填写 JSON 数组即可启用多账号模式。多账号配置优先级高于单账号的用户名、密码和 Cookie 字段。
+在“多账号配置”中填写 JSON 数组即可启用多账号模式。插件只使用这个 JSON 入口，不再单独提供 Cookie、用户名、密码和站点地址输入框。
 
 示例：
 
 ```json
 [
   {
-    "name": "账号1",
-    "username": "你的用户名1",
-    "password": "你的密码1",
-    "cookie": ""
+    "site": "juying",
+    "name": "聚影账号1",
+    "username": "你的用户名或邮箱",
+    "password": "你的密码",
+    "cookie": "",
+    "methods": ["normal"]
   },
   {
-    "name": "账号2",
-    "username": "你的用户名2",
-    "password": "你的密码2",
-    "cookie": ""
+    "site": "dian115",
+    "name": "癫影账号1",
+    "cookie": "portal_token=这里填手动登录后的Cookie",
+    "methods": ["normal"]
   }
 ]
 ```
 
-也可以只填写 Cookie：
+字段说明：
 
-```json
-[
-  {
-    "name": "账号1",
-    "username": "",
-    "password": "",
-    "cookie": "这里填账号1完整Cookie"
-  },
-  {
-    "name": "账号2",
-    "username": "",
-    "password": "",
-    "cookie": "这里填账号2完整Cookie"
-  }
-]
-```
+| 字段 | 说明 |
+| --- | --- |
+| `site` | 站点标志，支持 `juying`、`dian115` |
+| `name` | 账号显示名，用于历史和通知 |
+| `username` / `password` | 聚影可用；癫影不使用 |
+| `cookie` | 完整 Cookie。癫影必填；聚影可选 |
+| `methods` | 签到方式数组。`normal` 为普通签到；癫影还支持 `lucky` 运气签到 |
 
 多账号执行规则：
 
 - 插件按 JSON 数组顺序串行轮询执行，不并行签到。
 - 两个账号之间会按“账号轮询间隔”等待，默认 10 秒。
 - 单个账号失败后会按“失败重试间隔”等待后重试，默认 3 分钟。
-- 如果账号填写了 `username` 和 `password`，`cookie` 可以留空。自动登录成功后，插件会把获取到的 `cookie` 和 `storage_state` 回写到该账号配置中。
+- 聚影账号填写 `username` 和 `password` 时，`cookie` 可以留空。自动登录成功后，插件会把获取到的 `cookie` 和 `storage_state` 回写到该账号配置中。
+- 癫影只支持 Cookie 登录态，`methods` 设置为 `lucky` 时可能扣积分，不建议默认开启。
 - 每个账号的 Cookie、登录态、签到历史、连续天数、站点用户信息和通知都会独立处理。
 
 ## 仓库结构
@@ -117,10 +118,10 @@
 ```text
 MoviePilot-Plugins/
 ├── icons/
-│   ├── juyingsign.png
+│   ├── aggregatesign.png
 │   └── messagenotify.png
 ├── plugins/
-│   ├── juyingsign/
+│   ├── aggregatesign/
 │   │   ├── __init__.py
 │   │   ├── playwright_helper.py
 │   │   └── requirements.txt

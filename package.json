@@ -1,28 +1,17 @@
 {
-  "JuyingSign": {
-    "name": "聚影签到",
-    "description": "自动完成聚影每日签到，支持账号密码登录获取 Cookie、定时任务、失败重试和历史记录。",
-    "labels": "聚影,签到,站点",
-    "version": "1.1.0",
-    "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/juyingsign.png",
+  "AggregateSign": {
+    "name": "聚合签到",
+    "description": "聚合多个站点的每日签到，支持多账号、多站点、Cookie 登录态、定时任务和失败重试。",
+    "labels": "聚合,签到,站点",
+    "version": "1.0",
+    "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png",
     "author": "syscc",
     "homepage": "https://github.com/syscc/MoviePilot-Plugins",
     "repository": "https://github.com/syscc/MoviePilot-Plugins",
     "level": 2,
     "v2": true,
     "history": {
-      "1.1.0": "临时 DNS、超时等网络异常改为静默重试，避免重试成功前发送误导性失败通知。",
-      "1.0.10": "优化页面加载超时容错，减少网络抖动导致的首次签到失败。",
-      "1.0.9": "支持多账号串行轮询签到、账号间隔、失败分钟级重试、独立历史记录和通知。",
-      "1.0.8": "签到通知增加用户名和用户等级展示。",
-      "1.0.7": "补充插件首页链接，修复首页按钮跳转为空的问题。",
-      "1.0.6": "签到通知增加站点累计签到总天数展示。",
-      "1.0.5": "签到通知增加站点总积分展示。",
-      "1.0.4": "补充今日已签到后再次手动触发的重复签到通知。",
-      "1.0.3": "优化签到通知发送逻辑，补充通知发送日志和失败排查信息。",
-      "1.0.2": "优化聚影账号密码自动登录，直接获取站点 Cookie 并保存页面登录态。",
-      "1.0.1": "修正聚影登录方式，使用账号密码自动获取 Cookie 并通过 Cookie 完成签到。",
-      "1.0.0": "初始版本，支持账号密码自动登录、Cookie 登录态、定时签到、失败重试和历史记录。"
+      "1.0": "初始版本，改为聚合签到，统一使用多账号 JSON 配置，支持聚影自动登录和癫影 Cookie 签到。"
     }
   },
   "MessageNotify": {

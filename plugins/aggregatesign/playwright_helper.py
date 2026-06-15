@@ -1,4 +1,4 @@
-__all__ = ["JuyingPlaywrightClient", "JuyingBrowserError"]
+__all__ = ["AggregateSignClient", "AggregateSignBrowserError"]
 
 from contextlib import contextmanager
 from http.cookiejar import Cookie, CookieJar
@@ -9,7 +9,7 @@ from sys import platform
 from typing import Any, Dict, Iterator, Optional, Tuple
 from urllib.error import HTTPError
 from urllib.parse import unquote, urlparse
-from urllib.request import Request, build_opener, HTTPCookieProcessor, ProxyHandler, urlopen
+from urllib.request import Request, build_opener, HTTPCookieProcessor, ProxyHandler
 
 try:
     from cloakbrowser import launch_context as cloak_launch_context
@@ -26,15 +26,15 @@ except Exception:
 from app.core.config import settings
 
 
-class JuyingBrowserError(Exception):
+class AggregateSignBrowserError(Exception):
     """
-    聚影网页签到浏览器异常。
+    聚合签到浏览器异常。
     """
 
 
-class JuyingPlaywrightClient:
+class AggregateSignClient:
     """
-    聚影站点 Playwright/CloakBrowser 客户端。
+    聚合签到 Playwright/CloakBrowser 客户端。
     """
 
     _UA = (
@@ -45,10 +45,18 @@ class JuyingPlaywrightClient:
     _NAVIGATION_TIMEOUT = 60000
     _NETWORK_IDLE_TIMEOUT = 20000
 
-    def __init__(self, base_url: str = "https://share.huamucang.top", headless: bool = True) -> None:
+    def __init__(
+        self,
+        base_url: str = "https://share.huamucang.top",
+        headless: bool = True,
+        site_key: str = "juying",
+        checkin_path: str = "",
+        login_path: str = "",
+    ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.checkin_path = "/checkin"
-        self.login_path = "/login"
+        self.site_key = site_key or "juying"
+        self.checkin_path = checkin_path or ("/me/signin" if self.site_key == "dian115" else "/checkin")
+        self.login_path = login_path or "/login"
         self._headless = headless
 
     @staticmethod
@@ -76,7 +84,7 @@ class JuyingPlaywrightClient:
 
     @staticmethod
     def _playwright_proxy_settings() -> Optional[Dict[str, str]]:
-        raw = JuyingPlaywrightClient._proxy_url_from_settings()
+        raw = AggregateSignClient._proxy_url_from_settings()
         if not raw:
             return None
         parsed = urlparse(raw)
@@ -94,7 +102,7 @@ class JuyingPlaywrightClient:
 
     @staticmethod
     def _urllib_proxy_handler() -> Optional[ProxyHandler]:
-        raw = JuyingPlaywrightClient._proxy_url_from_settings()
+        raw = AggregateSignClient._proxy_url_from_settings()
         if not raw:
             return None
         return ProxyHandler({"http": raw, "https": raw})
@@ -102,7 +110,7 @@ class JuyingPlaywrightClient:
     @staticmethod
     @contextmanager
     def _socks5_slippers_if_needed() -> Iterator[Optional[Dict[str, str]]]:
-        raw = JuyingPlaywrightClient._proxy_url_from_settings()
+        raw = AggregateSignClient._proxy_url_from_settings()
         if not raw:
             yield None
             return
@@ -136,7 +144,7 @@ class JuyingPlaywrightClient:
             yield None
             return
         if sync_playwright is None:
-            raise JuyingBrowserError("当前环境缺少 CloakBrowser 或 Playwright 依赖")
+            raise AggregateSignBrowserError("当前环境缺少 CloakBrowser 或 Playwright 依赖")
         with sync_playwright() as playwright:
             yield playwright
 
@@ -170,7 +178,7 @@ class JuyingPlaywrightClient:
 
         browser = playwright.chromium.launch(
             headless=self._headless,
-            args=JuyingPlaywrightClient._chromium_launch_args(),
+            args=AggregateSignClient._chromium_launch_args(),
             proxy=proxy,
         )
         context = browser.new_context(
@@ -188,7 +196,7 @@ class JuyingPlaywrightClient:
                 return page.goto(
                     url,
                     wait_until=wait_until,
-                    timeout=JuyingPlaywrightClient._NAVIGATION_TIMEOUT,
+                    timeout=AggregateSignClient._NAVIGATION_TIMEOUT,
                 )
             except PlaywrightTimeoutError as err:
                 last_error = err
@@ -214,13 +222,13 @@ class JuyingPlaywrightClient:
             pass
 
     def _add_cookies(self, context: Any, cookie_str: str) -> None:
-        cookies = JuyingPlaywrightClient._parse_cookie_str(cookie_str)
+        cookies = AggregateSignClient._parse_cookie_str(cookie_str)
         if not cookies:
-            raise JuyingBrowserError("未配置有效 Cookie")
+            raise AggregateSignBrowserError("未配置有效 Cookie")
 
         domain = urlparse(self.base_url).hostname
         if not domain:
-            raise JuyingBrowserError("站点地址无效")
+            raise AggregateSignBrowserError("站点地址无效")
 
         context.add_cookies([
             {
@@ -350,7 +358,7 @@ class JuyingPlaywrightClient:
             cookie_jar.set_cookie(self._make_cookie(name, value, domain))
 
         handlers = [HTTPCookieProcessor(cookie_jar)]
-        proxy = JuyingPlaywrightClient._urllib_proxy_handler()
+        proxy = AggregateSignClient._urllib_proxy_handler()
         if proxy:
             handlers.append(proxy)
         opener = build_opener(*handlers)
@@ -387,6 +395,113 @@ class JuyingPlaywrightClient:
             data = {}
         return status, data, self._cookiejar_to_str(cookie_jar)
 
+    def _dian115_api_request(
+        self,
+        path: str,
+        method: str = "GET",
+        cookie_str: str = "",
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[int, Dict[str, Any], str]:
+        cookie_jar = CookieJar()
+        domain = urlparse(self.base_url).hostname or "m.dian115.com"
+        for name, value in self._parse_cookie_str(cookie_str).items():
+            cookie_jar.set_cookie(self._make_cookie(name, value, domain))
+
+        handlers = [HTTPCookieProcessor(cookie_jar)]
+        proxy = AggregateSignClient._urllib_proxy_handler()
+        if proxy:
+            handlers.append(proxy)
+        opener = build_opener(*handlers)
+
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        headers = {
+            "User-Agent": self._UA,
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "Origin": self.base_url,
+            "Referer": f"{self.base_url}{self.checkin_path}",
+        }
+        request = Request(
+            f"{self.base_url}/api/portal{path}",
+            data=data,
+            method=method,
+            headers=headers,
+        )
+        try:
+            response = opener.open(request, timeout=30)
+            with response:
+                body = response.read().decode("utf-8", errors="replace")
+                status = response.status
+        except HTTPError as err:
+            body = err.read().decode("utf-8", errors="replace")
+            status = err.code
+
+        try:
+            data = json.loads(body or "{}")
+        except Exception:
+            data = {}
+        return status, data, self._cookiejar_to_str(cookie_jar)
+
+    def _dian115_login(self, username: str, password: str) -> Tuple[bool, str, str, str]:
+        status, data, cookie_str = self._dian115_api_request(
+            path="/auth/login",
+            method="POST",
+            payload={"email": username, "password": password},
+        )
+        code = str(data.get("code") or "")
+        message = str(data.get("msg") or data.get("message") or f"登录接口 HTTP {status}")
+        if code == "turnstile_failed":
+            return False, "", "", "站点启用了 Turnstile 人机验证，无法自动登录；请手动登录后复制 Cookie 到多账号配置"
+        if status >= 400 or code not in ("", "ok"):
+            return False, "", "", message
+        if not cookie_str:
+            return False, "", "", "登录接口未返回 Cookie"
+        return True, cookie_str, "", "登录成功"
+
+    def _dian115_checkin(self, cookie_str: str, methods: Optional[list[str]] = None) -> Tuple[bool, str]:
+        if not cookie_str:
+            return False, "未配置 Cookie"
+        methods = methods or ["normal"]
+        results = []
+        success = False
+        for method in methods:
+            mode = "lucky" if str(method).lower() in ("lucky", "luck", "运气签到", "运气") else "normal"
+            status, data, _ = self._dian115_api_request(
+                path="/signin",
+                method="POST",
+                cookie_str=cookie_str,
+                payload={"mode": mode},
+            )
+            if status == 401 or data.get("code") in ("no_token", "invalid_token", "token_revoked"):
+                return False, "Cookie 无效或登录已过期"
+            code = data.get("code")
+            if code == "already_signed":
+                results.append(f"{self._dian115_method_name(mode)}: 今日已签到")
+                success = True
+                continue
+            if status >= 400 or code not in ("", "ok", None):
+                msg = data.get("msg") or data.get("message") or f"HTTP {status}"
+                results.append(f"{self._dian115_method_name(mode)}失败: {msg}")
+                continue
+
+            award = data.get("award")
+            balance = data.get("new_balance")
+            tier = data.get("lucky_tier")
+            detail = f"{self._dian115_method_name(mode)}成功"
+            if award is not None:
+                detail += f"，奖励积分 {award}"
+            if balance is not None:
+                detail += f"，当前积分 {balance}"
+            if tier:
+                detail += f"，运气结果 {tier}"
+            results.append(detail)
+            success = True
+        return success, "；".join(results) if results else "签到完成"
+
+    @staticmethod
+    def _dian115_method_name(method: str) -> str:
+        return "运气签到" if method == "lucky" else "普通签到"
+
     def _login_by_api_cookie(self, username: str, password: str) -> Tuple[bool, str, str, str]:
         status, data, cookie_str = self._api_request_with_login_state(
             path="/api/app/login/",
@@ -403,6 +518,17 @@ class JuyingPlaywrightClient:
         return True, cookie_str, storage_state, "登录成功"
 
     def get_profile(self, cookie_str: str, storage_state: str = "") -> Dict[str, Any]:
+        if self.site_key == "dian115":
+            status, data, _ = self._dian115_api_request(
+                path="/me",
+                method="GET",
+                cookie_str=cookie_str,
+            )
+            if status >= 400 or not isinstance(data, dict):
+                return {}
+            user = data.get("user")
+            return user if isinstance(user, dict) else data
+
         token = self._token_from_storage_state(storage_state)
         status, data, _ = self._api_request_with_login_state(
             path="/api/app/profile/",
@@ -464,14 +590,22 @@ class JuyingPlaywrightClient:
     def _is_already_signed_text(text: str) -> bool:
         return any(keyword in text for keyword in ("已签到", "已经签到", "今日已签", "明天再来"))
 
-    def checkin(self, cookie_str: str, storage_state: str = "") -> Tuple[bool, str]:
+    def checkin(
+        self,
+        cookie_str: str,
+        storage_state: str = "",
+        methods: Optional[list[str]] = None,
+    ) -> Tuple[bool, str]:
+        if self.site_key == "dian115":
+            return self._dian115_checkin(cookie_str=cookie_str, methods=methods)
+
         if not cookie_str:
             return False, "未配置 Cookie"
 
         try:
-            with JuyingPlaywrightClient._browser_runtime() as playwright:
-                with JuyingPlaywrightClient._socks5_slippers_if_needed() as slip:
-                    proxy = slip if slip is not None else JuyingPlaywrightClient._playwright_proxy_settings()
+            with AggregateSignClient._browser_runtime() as playwright:
+                with AggregateSignClient._socks5_slippers_if_needed() as slip:
+                    proxy = slip if slip is not None else AggregateSignClient._playwright_proxy_settings()
                     browser, context = self._make_context(playwright, proxy)
                     try:
                         self._add_cookies(context, cookie_str)
@@ -484,7 +618,7 @@ class JuyingPlaywrightClient:
                             return False, "Cookie 无效或登录已过期，站点跳转到登录页"
 
                         page_text = self._extract_page_message(page)
-                        if JuyingPlaywrightClient._is_already_signed_text(page_text):
+                        if AggregateSignClient._is_already_signed_text(page_text):
                             return True, page_text or "今日已签到"
 
                         button = page.locator("button:has-text('立即签到')").first
@@ -492,7 +626,7 @@ class JuyingPlaywrightClient:
                             button.wait_for(state="visible", timeout=15000)
                         except PlaywrightTimeoutError:
                             page_text = self._extract_page_message(page)
-                            if JuyingPlaywrightClient._is_already_signed_text(page_text):
+                            if AggregateSignClient._is_already_signed_text(page_text):
                                 return True, page_text or "今日已签到"
                             return False, page_text or "未找到立即签到按钮"
 
@@ -513,7 +647,7 @@ class JuyingPlaywrightClient:
                         return False, result_text or "签到后未识别到成功提示"
                     finally:
                         browser.close()
-        except JuyingBrowserError as err:
+        except AggregateSignBrowserError as err:
             return False, str(err)
         except Exception as err:
             return False, f"签到异常: {err}"
@@ -522,14 +656,17 @@ class JuyingPlaywrightClient:
         if not username or not password:
             return False, "", "", "未配置用户名或密码"
 
+        if self.site_key == "dian115":
+            return self._dian115_login(username=username, password=password)
+
         success, cookie_str, storage_state, message = self._login_by_api_cookie(username, password)
         if success:
             return True, cookie_str, storage_state, message
 
         try:
-            with JuyingPlaywrightClient._browser_runtime() as playwright:
-                with JuyingPlaywrightClient._socks5_slippers_if_needed() as slip:
-                    proxy = slip if slip is not None else JuyingPlaywrightClient._playwright_proxy_settings()
+            with AggregateSignClient._browser_runtime() as playwright:
+                with AggregateSignClient._socks5_slippers_if_needed() as slip:
+                    proxy = slip if slip is not None else AggregateSignClient._playwright_proxy_settings()
                     browser, context = self._make_context(playwright, proxy)
                     try:
                         page = context.new_page()
@@ -571,7 +708,7 @@ class JuyingPlaywrightClient:
                         return True, cookie_str, storage_state, "登录成功"
                     finally:
                         browser.close()
-        except JuyingBrowserError as err:
+        except AggregateSignBrowserError as err:
             return False, "", "", str(err)
         except Exception as err:
             return False, "", "", f"登录异常: {err}"
