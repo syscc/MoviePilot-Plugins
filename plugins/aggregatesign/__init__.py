@@ -1,6 +1,6 @@
 """
 聚合签到插件
-版本: 1.0
+版本: 1.1
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
@@ -37,7 +37,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "1.0"
+    plugin_version = "1.1"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -997,7 +997,11 @@ class AggregateSign(_PluginBase):
             "status": "已签到" if self._is_manual_trigger() else "跳过: 今日已签到",
             "message": latest.get("message") or "今日已完成签到",
             "points": latest.get("points", "—"),
-            "site_username": latest.get("site_username", site_info.get("site_username", "—")),
+            "site_username": (
+                site_info.get("site_username")
+                if site_info.get("site_username") not in (None, "", "—")
+                else latest.get("site_username", "—")
+            ),
             "site_level": latest.get("site_level", site_info.get("site_level", "—")),
             "total_points": latest.get("total_points", site_info.get("total_points", "—")),
             "site_total_days": latest.get("site_total_days", site_info.get("site_total_days", "—")),
@@ -1023,7 +1027,7 @@ class AggregateSign(_PluginBase):
                 login_path=site.get("login_path", ""),
             )
             profile = client.get_profile(cookie_str=self._cookie, storage_state=self._storage_state)
-            site_username = profile.get("username") or profile.get("name") or profile.get("nickname") or profile.get("email")
+            site_username = self._profile_display_name(profile)
             if site_username:
                 info["site_username"] = site_username
                 self.save_data(self._data_key("site_username"), site_username)
@@ -1048,6 +1052,24 @@ class AggregateSign(_PluginBase):
         except Exception as e:
             logger.warning(f"获取{self._current_site_name}站点信息失败: {e}")
             return info
+
+    def _profile_display_name(self, profile: Dict[str, Any]) -> str:
+        if not isinstance(profile, dict):
+            return ""
+        if self._current_site_key == "dian115":
+            for key in ("email", "nickname", "name", "display_name"):
+                value = str(profile.get(key) or "").strip()
+                if value:
+                    return value
+            username = str(profile.get("username") or profile.get("sub") or "").strip()
+            if username.startswith("u_") and self._current_account_name:
+                return self._current_account_name
+            return username
+        for key in ("username", "name", "nickname", "email", "display_name"):
+            value = str(profile.get(key) or "").strip()
+            if value:
+                return value
+        return ""
 
     @staticmethod
     def _is_already_signed_message(message: str) -> bool:
