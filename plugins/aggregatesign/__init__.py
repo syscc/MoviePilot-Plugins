@@ -1,6 +1,6 @@
 """
 聚合签到插件
-版本: 1.5
+版本: 1.6
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
@@ -37,7 +37,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "1.5"
+    plugin_version = "1.6"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -221,11 +221,6 @@ class AggregateSign(_PluginBase):
             f"retry={retry_count}, trigger={self._current_trigger_type}"
         )
         try:
-            if self._is_already_signed_today():
-                sign_dict = self._build_repeat_record()
-                self._send_sign_notification(sign_dict)
-                return sign_dict
-
             if not self._cookie:
                 login_ok, login_message = self._auto_login()
                 if not login_ok:
@@ -254,6 +249,11 @@ class AggregateSign(_PluginBase):
                     self._save_sign_history(sign_dict)
                     self._send_sign_notification(sign_dict)
                     return sign_dict
+
+            if self._is_already_signed_today():
+                sign_dict = self._build_repeat_record()
+                self._send_sign_notification(sign_dict)
+                return sign_dict
 
             success, message = self._signin_base()
             if success:
@@ -1038,6 +1038,7 @@ class AggregateSign(_PluginBase):
             if record.get("date", "").startswith(today)
             and record.get("status") in ["签到成功", "已签到"]
         ]
+        today_success = sorted(today_success, key=lambda item: item.get("date", ""), reverse=True)
         latest = max(today_success, key=lambda item: item.get("date", ""), default={})
         site_info = self._fetch_site_info()
         return {
@@ -1047,16 +1048,37 @@ class AggregateSign(_PluginBase):
             "account": self._current_account_name,
             "account_key": self._current_account_key,
             "status": "已签到" if self._is_manual_trigger() else "跳过: 今日已签到",
-            "message": latest.get("message") or "今日已完成签到",
-            "points": latest.get("points", "—"),
-            "site_username": (
-                site_info.get("site_username")
-                if site_info.get("site_username") not in (None, "", "—")
-                else latest.get("site_username", "—")
+            "message": self._first_existing_value(
+                latest.get("message"),
+                *(record.get("message") for record in today_success[1:]),
+                "今日已完成签到",
             ),
-            "site_level": self._prefer_site_info(site_info, latest, "site_level"),
-            "total_points": self._prefer_site_info(site_info, latest, "total_points"),
-            "site_total_days": self._prefer_site_info(site_info, latest, "site_total_days"),
+            "points": self._first_existing_value(
+                latest.get("points"),
+                *(record.get("points") for record in today_success[1:]),
+                "—",
+            ),
+            "site_username": self._first_existing_value(
+                site_info.get("site_username"),
+                *(record.get("site_username") for record in today_success),
+                self._current_account_name,
+                "—",
+            ),
+            "site_level": self._first_existing_value(
+                site_info.get("site_level"),
+                *(record.get("site_level") for record in today_success),
+                "—",
+            ),
+            "total_points": self._first_existing_value(
+                site_info.get("total_points"),
+                *(record.get("total_points") for record in today_success),
+                "—",
+            ),
+            "site_total_days": self._first_existing_value(
+                site_info.get("site_total_days"),
+                *(record.get("site_total_days") for record in today_success),
+                "—",
+            ),
             "days": latest.get("days", self.get_data(self._data_key("consecutive_days")) or "—"),
         }
 
@@ -1158,6 +1180,13 @@ class AggregateSign(_PluginBase):
             if value not in (None, "", "—"):
                 return value
         return None
+
+    @staticmethod
+    def _first_existing_value(*values: Any) -> Any:
+        for value in values:
+            if value not in (None, "", "—"):
+                return value
+        return "—"
 
     @staticmethod
     def _compact_login_message(message: str) -> str:
