@@ -1,6 +1,6 @@
 """
 聚合签到插件
-版本: 1.4
+版本: 1.5
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
@@ -37,7 +37,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "1.4"
+    plugin_version = "1.5"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -189,11 +189,15 @@ class AggregateSign(_PluginBase):
                         self._apply_account(account)
                         results.append(self._sign_current_account(0))
                     self._restore_legacy_account()
-                    return self._build_multi_result(results)
+                    result = self._build_multi_result(results)
+                    self._log_sign_finished(result, start_time)
+                    return result
                 if accounts:
                     self._apply_account(accounts[0])
 
-            return self._sign_current_account(retry_count)
+            result = self._sign_current_account(retry_count)
+            self._log_sign_finished(result, start_time)
+            return result
         except Exception as e:
             logger.error(f"聚合签到异常: {e}", exc_info=True)
             if (datetime.now() - start_time).total_seconds() > 300:
@@ -494,6 +498,25 @@ class AggregateSign(_PluginBase):
             "results": results,
         }
 
+    def _log_sign_finished(self, result: Dict[str, Any], start_time: datetime):
+        elapsed = round((datetime.now() - start_time).total_seconds(), 1)
+        results = result.get("results") if isinstance(result, dict) else None
+        if isinstance(results, list):
+            total = len(results)
+            success_count = sum(1 for item in results if "失败" not in str(item.get("status", "")))
+            fail_count = total - success_count
+            logger.info(
+                f"聚合签到完成，trigger={self._current_trigger_type}, total={total}, "
+                f"success={success_count}, failed={fail_count}, elapsed={elapsed}秒"
+            )
+            return
+        logger.info(
+            f"聚合签到完成，trigger={self._current_trigger_type}, "
+            f"site={result.get('site', self._current_site_name)}, "
+            f"account={result.get('account', self._current_account_name)}, "
+            f"status={result.get('status', '未知')}, elapsed={elapsed}秒"
+        )
+
     def _restore_legacy_account(self):
         self._current_account = {}
         self._current_account_key = "default"
@@ -603,7 +626,6 @@ class AggregateSign(_PluginBase):
         message = sign_dict.get("message", "—")
         points = sign_dict.get("points", "—")
         site_username = sign_dict.get("site_username", "—")
-        site_level = sign_dict.get("site_level", "—")
         total_points = sign_dict.get("total_points", "—")
         site_total_days = sign_dict.get("site_total_days", "—")
         days = sign_dict.get("days", self.get_data(self._data_key("consecutive_days")) or "—")
@@ -626,7 +648,6 @@ class AggregateSign(_PluginBase):
             f"账号：{account}\n"
             f"状态：{status}\n"
             f"用户：{site_username}\n"
-            f"等级：{site_level}\n"
             f"━━━━━━━━━━\n"
             f"签到信息\n"
             f"详情：{message}\n"
@@ -1033,9 +1054,9 @@ class AggregateSign(_PluginBase):
                 if site_info.get("site_username") not in (None, "", "—")
                 else latest.get("site_username", "—")
             ),
-            "site_level": latest.get("site_level", site_info.get("site_level", "—")),
-            "total_points": latest.get("total_points", site_info.get("total_points", "—")),
-            "site_total_days": latest.get("site_total_days", site_info.get("site_total_days", "—")),
+            "site_level": self._prefer_site_info(site_info, latest, "site_level"),
+            "total_points": self._prefer_site_info(site_info, latest, "total_points"),
+            "site_total_days": self._prefer_site_info(site_info, latest, "site_total_days"),
             "days": latest.get("days", self.get_data(self._data_key("consecutive_days")) or "—"),
         }
 
@@ -1048,41 +1069,95 @@ class AggregateSign(_PluginBase):
         }
         if AggregateSignClient is None or not self._cookie:
             return info
+        site = self._site_defaults.get(self._current_site_key, self._site_defaults["juying"])
+        client = AggregateSignClient(
+            base_url=self._base_url,
+            headless=True,
+            site_key=self._current_site_key,
+            checkin_path=site.get("checkin_path", ""),
+            login_path=site.get("login_path", ""),
+        )
+
+        profile: Dict[str, Any] = {}
         try:
-            site = self._site_defaults.get(self._current_site_key, self._site_defaults["juying"])
-            client = AggregateSignClient(
-                base_url=self._base_url,
-                headless=True,
-                site_key=self._current_site_key,
-                checkin_path=site.get("checkin_path", ""),
-                login_path=site.get("login_path", ""),
-            )
             profile = client.get_profile(cookie_str=self._cookie, storage_state=self._storage_state)
             site_username = self._profile_display_name(profile)
             if site_username:
                 info["site_username"] = site_username
                 self.save_data(self._data_key("site_username"), site_username)
 
-            site_level = profile.get("level_name") or profile.get("level") or profile.get("user_level")
+            site_level = self._first_profile_value(
+                profile,
+                ("level_name", "level_label", "level_title", "vip_name", "vip_level_name", "level", "user_level", "vip_level"),
+            )
             if site_level is not None:
                 info["site_level"] = site_level
                 self.save_data(self._data_key("site_level"), site_level)
 
-            total = profile.get("points")
+            total = self._first_profile_value(
+                profile,
+                ("points", "point", "score", "credit", "credits", "balance", "coin", "coins", "new_balance"),
+            )
             if total is not None:
                 info["total_points"] = total
                 self.save_data(self._data_key("total_points"), total)
+        except Exception as e:
+            logger.warning(f"获取{self._current_site_name}用户信息失败: {e}")
 
-            if self._current_site_key == "juying":
-                stats = client.get_checkin_stats(cookie_str=self._cookie, storage_state=self._storage_state)
-                site_total_days = stats.get("my_total_days")
+        if self._current_site_key == "dian115":
+            try:
+                site_total_days = self._first_profile_value(
+                    profile,
+                    (
+                        "signin_days",
+                        "sign_days",
+                        "checkin_days",
+                        "total_signin_days",
+                        "total_checkin_days",
+                        "continuous_signin_days",
+                        "streak_days",
+                    ),
+                )
                 if site_total_days is not None:
                     info["site_total_days"] = site_total_days
                     self.save_data(self._data_key("site_total_days"), site_total_days)
-            return info
-        except Exception as e:
-            logger.warning(f"获取{self._current_site_name}站点信息失败: {e}")
-            return info
+            except Exception as e:
+                logger.warning(f"获取{self._current_site_name}签到统计失败: {e}")
+        elif self._current_site_key == "juying":
+            try:
+                stats = client.get_checkin_stats(cookie_str=self._cookie, storage_state=self._storage_state)
+                site_total_days = self._first_profile_value(
+                    stats,
+                    ("my_total_days", "total_days", "checkin_days", "sign_days", "signin_days", "days"),
+                )
+                if site_total_days is not None:
+                    info["site_total_days"] = site_total_days
+                    self.save_data(self._data_key("site_total_days"), site_total_days)
+                total = self._first_profile_value(
+                    stats,
+                    ("points", "total_points", "score", "credit", "credits", "balance"),
+                )
+                if total is not None:
+                    info["total_points"] = total
+                    self.save_data(self._data_key("total_points"), total)
+            except Exception as e:
+                logger.warning(f"获取{self._current_site_name}签到统计失败: {e}")
+        return info
+
+    @staticmethod
+    def _prefer_site_info(site_info: Dict[str, Any], latest: Dict[str, Any], key: str) -> Any:
+        value = site_info.get(key)
+        if value not in (None, "", "—"):
+            return value
+        return latest.get(key, "—")
+
+    @staticmethod
+    def _first_profile_value(profile: Dict[str, Any], keys: Tuple[str, ...]) -> Any:
+        for key in keys:
+            value = profile.get(key)
+            if value not in (None, "", "—"):
+                return value
+        return None
 
     @staticmethod
     def _compact_login_message(message: str) -> str:

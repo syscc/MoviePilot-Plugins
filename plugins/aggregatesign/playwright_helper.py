@@ -527,7 +527,11 @@ class AggregateSignClient:
             if status >= 400 or not isinstance(data, dict):
                 return {}
             user = data.get("user")
-            return user if isinstance(user, dict) else data
+            if isinstance(user, dict):
+                profile = dict(data)
+                profile.update(user)
+                return profile
+            return data
 
         token = self._token_from_storage_state(storage_state)
         status, data, _ = self._api_request_with_login_state(
