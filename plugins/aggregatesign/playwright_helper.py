@@ -692,7 +692,7 @@ class AggregateSignClient:
                             page_text = self._extract_page_message(page)
                             if any(keyword in page_text for keyword in ("错误", "失败", "密码", "验证码")):
                                 return False, "", "", page_text
-                            return False, "", "", page_text or "登录后仍停留在登录页"
+                            return False, "", "", "登录后仍停留在登录页，可能账号密码错误、站点登录页面变化或站点响应过慢"
 
                         self._goto_page(page, f"{self.base_url}{self.checkin_path}")
                         self._wait_network_idle(page, timeout=15000)

@@ -1,6 +1,6 @@
 """
 聚合签到插件
-版本: 1.3
+版本: 1.4
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
@@ -37,7 +37,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "1.3"
+    plugin_version = "1.4"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -232,10 +232,20 @@ class AggregateSign(_PluginBase):
                         )
                         time.sleep(self._retry_interval)
                         return self._sign_current_account(retry_count + 1)
+                    login_message = self._compact_login_message(login_message)
+                    if self._username and self._password:
+                        status = "签到失败: 自动登录失败"
+                        message = (
+                            f"{self._current_site_name} 自动登录失败: {login_message}。"
+                            "可稍后重试，或手动登录后填写 Cookie。"
+                        )
+                    else:
+                        status = "签到失败: 未配置 Cookie"
+                        message = f"请填写 {self._current_site_name} 登录 Cookie，或配置可用的自动登录信息。"
                     sign_dict = {
                         "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
-                        "status": "签到失败: 未配置 Cookie",
-                        "message": f"请填写 {self._current_site_name} 登录 Cookie，或配置可用的自动登录信息。{login_message}",
+                        "status": status,
+                        "message": message,
                     }
                     self._save_sign_history(sign_dict)
                     self._send_sign_notification(sign_dict)
@@ -371,6 +381,7 @@ class AggregateSign(_PluginBase):
                 account = {
                     "site": site_key,
                     "site_name": site.get("name") or site_key,
+                    "index": index,
                     "base_url": str(item.get("base_url") or site.get("base_url") or "").rstrip("/"),
                     "name": str(item.get("name") or item.get("username") or f"账号{index}").strip(),
                     "username": str(item.get("username") or "").strip(),
@@ -423,6 +434,25 @@ class AggregateSign(_PluginBase):
             return
         if not isinstance(raw_accounts, list):
             return
+        target_index = int(self._current_account.get("index") or 0)
+        if 1 <= target_index <= len(raw_accounts):
+            item = raw_accounts[target_index - 1]
+            if isinstance(item, dict):
+                account_key = self._account_key({
+                    "site": str(item.get("site") or item.get("site_key") or "juying").strip().lower(),
+                    "name": str(item.get("name") or item.get("username") or f"账号{target_index}").strip(),
+                    "username": str(item.get("username") or "").strip(),
+                }, target_index)
+                if account_key == self._current_account_key:
+                    item["cookie"] = self._cookie
+                    item["storage_state"] = self._storage_state
+                    self._accounts_text = json.dumps(raw_accounts, ensure_ascii=False, indent=2)
+                    logger.info(
+                        f"已回写{self._current_site_name}登录态，account={self._current_account_name}, "
+                        f"index={target_index}, cookie_len={len(self._cookie)}, storage_state_len={len(self._storage_state)}"
+                    )
+                    return
+
         for index, item in enumerate(raw_accounts, start=1):
             if not isinstance(item, dict):
                 continue
@@ -434,6 +464,10 @@ class AggregateSign(_PluginBase):
             if account_key == self._current_account_key:
                 item["cookie"] = self._cookie
                 item["storage_state"] = self._storage_state
+                logger.info(
+                    f"已回写{self._current_site_name}登录态，account={self._current_account_name}, "
+                    f"index={index}, cookie_len={len(self._cookie)}, storage_state_len={len(self._storage_state)}"
+                )
                 break
         self._accounts_text = json.dumps(raw_accounts, ensure_ascii=False, indent=2)
 
@@ -1007,7 +1041,7 @@ class AggregateSign(_PluginBase):
 
     def _fetch_site_info(self) -> Dict[str, Any]:
         info = {
-            "site_username": self.get_data(self._data_key("site_username")) or "—",
+            "site_username": self.get_data(self._data_key("site_username")) or self._current_account_name or "—",
             "site_level": self.get_data(self._data_key("site_level")) or "—",
             "total_points": self.get_data(self._data_key("total_points")) or "—",
             "site_total_days": self.get_data(self._data_key("site_total_days")) or "—",
@@ -1049,6 +1083,17 @@ class AggregateSign(_PluginBase):
         except Exception as e:
             logger.warning(f"获取{self._current_site_name}站点信息失败: {e}")
             return info
+
+    @staticmethod
+    def _compact_login_message(message: str) -> str:
+        text = " ".join(str(message or "").split())
+        if not text:
+            return "登录失败"
+        if "用户名或邮箱" in text and "注册账号" in text and "找回密码" in text:
+            return "登录后仍停留在登录页，可能账号密码错误、站点登录页面变化或站点响应过慢"
+        if len(text) > 120:
+            return f"{text[:120]}..."
+        return text
 
     def _profile_display_name(self, profile: Dict[str, Any]) -> str:
         if not isinstance(profile, dict):
