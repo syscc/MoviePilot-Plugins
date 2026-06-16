@@ -1,6 +1,6 @@
 """
 聚合签到插件
-版本: 1.1
+版本: 1.2
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
@@ -37,7 +37,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "1.1"
+    plugin_version = "1.2"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -271,17 +271,6 @@ class AggregateSign(_PluginBase):
                         return sign_dict
                 else:
                     message = f"{message}；自动登录失败: {login_message}"
-
-            if retry_count < self._max_retries:
-                self._post_notification(
-                    title=f"【{self._current_site_name}签到重试】",
-                    text=(
-                        f"账号：{self._current_account_name}\n"
-                        f"签到失败: {message}，{self._retry_interval_minutes} 分钟后进行第 {retry_count + 1} 次重试"
-                    ),
-                )
-                time.sleep(self._retry_interval)
-                return self._sign_current_account(retry_count + 1)
 
             sign_dict = {
                 "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
