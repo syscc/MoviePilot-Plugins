@@ -1,6 +1,6 @@
 """
 聚合签到插件
-版本: 1.2
+版本: 1.3
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
@@ -37,7 +37,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "1.2"
+    plugin_version = "1.3"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -281,11 +281,19 @@ class AggregateSign(_PluginBase):
             self._send_sign_notification(sign_dict)
             return sign_dict
         except Exception as e:
-            logger.error(f"{self._current_site_name}账号签到异常: {e}", exc_info=True)
+            message = str(e)
+            if self._is_transient_error(message) and retry_count < self._max_retries:
+                logger.info(
+                    f"{self._current_site_name}账号签到遇到临时网络异常，account={self._current_account_name}, "
+                    f"retry={retry_count}, {self._retry_interval_minutes} 分钟后静默重试: {message}"
+                )
+                time.sleep(self._retry_interval)
+                return self._sign_current_account(retry_count + 1)
+            logger.error(f"{self._current_site_name}账号签到异常: {message}", exc_info=True)
             sign_dict = {
                 "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
-                "status": f"签到失败: {e}",
-                "message": str(e),
+                "status": f"签到失败: {message}",
+                "message": message,
             }
             self._save_sign_history(sign_dict)
             self._send_sign_notification(sign_dict)

@@ -659,9 +659,12 @@ class AggregateSignClient:
         if self.site_key == "dian115":
             return self._dian115_login(username=username, password=password)
 
-        success, cookie_str, storage_state, message = self._login_by_api_cookie(username, password)
-        if success:
-            return True, cookie_str, storage_state, message
+        try:
+            success, cookie_str, storage_state, message = self._login_by_api_cookie(username, password)
+            if success:
+                return True, cookie_str, storage_state, message
+        except Exception as err:
+            message = f"登录接口异常: {err}"
 
         try:
             with AggregateSignClient._browser_runtime() as playwright:
