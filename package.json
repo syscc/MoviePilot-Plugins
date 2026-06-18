@@ -3,7 +3,7 @@
     "name": "聚合签到",
     "description": "聚合多个站点的每日签到，支持多账号、多站点、Cookie 登录态、定时任务和失败重试。",
     "labels": "聚合,签到,站点",
-    "version": "1.6",
+    "version": "1.7",
     "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png",
     "author": "syscc",
     "homepage": "https://github.com/syscc/MoviePilot-Plugins",
@@ -11,6 +11,7 @@
     "level": 2,
     "v2": true,
     "history": {
+      "1.7": "癫影支持账号密码自动登录获取 Cookie，Cookie 失效后可自动重新登录并回写配置。",
       "1.6": "调整聚影无 Cookie 时的自动登录顺序，避免当天已签到历史导致跳过登录，并增强重复签到通知的数据回填。",
       "1.5": "新增聚合签到完成日志，通知中移除等级展示，并增强聚影、癫影总积分和累计签到数据补全。",
       "1.4": "优化聚影自动登录失败通知文案和多账号登录态回写，避免输出整页登录表单文本，站点信息获取超时时使用配置账号名兜底显示用户。",

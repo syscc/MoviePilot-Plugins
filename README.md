@@ -2,7 +2,7 @@
 
 这是一个用于 MoviePilot 的第三方插件仓库，目前维护 `AggregateSign` 和 `MessageNotify`。
 
-其中聚合签到插件使用 JSON 多账号配置统一管理多个站点，当前支持聚影和癫影。聚影支持账号密码自动登录或 Cookie 登录态，癫影只支持手动登录后填写 Cookie。
+其中聚合签到插件使用 JSON 多账号配置统一管理多个站点，当前支持聚影和癫影。两个站点均支持账号密码自动登录或 Cookie 登录态。
 
 ## 插件列表
 
@@ -52,13 +52,11 @@
 | site | 站点 | 登录方式 | 签到方式 |
 | --- | --- | --- | --- |
 | `juying` | `https://share.huamucang.top` | 账号密码自动登录或 Cookie | `normal` |
-| `dian115` | `https://m.dian115.com` | 仅 Cookie | `normal` 普通签到、`lucky` 运气签到 |
+| `dian115` | `https://m.dian115.com` | 账号密码自动登录或 Cookie | `normal` 普通签到、`lucky` 运气签到 |
 
 ## 登录方式
 
-聚影可以填写 `username` 和 `password`，插件会自动登录获取 Cookie；也可以只填写 Cookie。
-
-癫影登录接口启用了 Turnstile 人机验证，不支持账号密码自动登录。请手动登录后复制 Cookie，填入 `cookie` 字段。
+聚影和癫影都可以填写 `username` 和 `password`，插件会自动登录获取 Cookie；也可以只填写 Cookie。
 
 复制 Cookie 的通用步骤：
 
@@ -67,7 +65,7 @@
 3. 在 Network 或 Application/Storage 中复制当前站点的完整 Cookie。
 4. 粘贴到多账号 JSON 的 `cookie` 字段。
 
-Cookie 失效后需要重新手动复制新的 Cookie。
+Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件会尝试自动重新登录并回写新的 Cookie。
 
 ## 多账号配置
 
@@ -88,7 +86,9 @@ Cookie 失效后需要重新手动复制新的 Cookie。
   {
     "site": "dian115",
     "name": "癫影账号1",
-    "cookie": "portal_token=这里填手动登录后的Cookie",
+    "username": "你的邮箱",
+    "password": "你的密码",
+    "cookie": "",
     "methods": ["normal"]
   }
 ]
@@ -100,8 +100,8 @@ Cookie 失效后需要重新手动复制新的 Cookie。
 | --- | --- |
 | `site` | 站点标志，支持 `juying`、`dian115` |
 | `name` | 账号显示名，用于历史和通知 |
-| `username` / `password` | 聚影可用；癫影不使用 |
-| `cookie` | 完整 Cookie。癫影必填；聚影可选 |
+| `username` / `password` | 用于自动登录获取 Cookie，聚影和癫影均可用 |
+| `cookie` | 完整 Cookie，可选；留空时会尝试用账号密码自动登录 |
 | `methods` | 签到方式数组。`normal` 为普通签到；癫影还支持 `lucky` 运气签到 |
 
 多账号执行规则：
@@ -109,8 +109,8 @@ Cookie 失效后需要重新手动复制新的 Cookie。
 - 插件按 JSON 数组顺序串行轮询执行，不并行签到。
 - 两个账号之间会按“账号轮询间隔”等待，默认 10 秒。
 - 单个账号失败后会按“失败重试间隔”等待后重试，默认 3 分钟。
-- 聚影账号填写 `username` 和 `password` 时，`cookie` 可以留空。自动登录成功后，插件会把获取到的 `cookie` 和 `storage_state` 回写到该账号配置中。
-- 癫影只支持 Cookie 登录态，`methods` 设置为 `lucky` 时可能扣积分，不建议默认开启。
+- 账号填写 `username` 和 `password` 时，`cookie` 可以留空。自动登录成功后，插件会把获取到的 `cookie` 和 `storage_state` 回写到该账号配置中。
+- 癫影 `methods` 设置为 `lucky` 时可能扣积分，不建议默认开启。
 - 每个账号的 Cookie、登录态、签到历史、连续天数、站点用户信息和通知都会独立处理。
 
 ## 仓库结构

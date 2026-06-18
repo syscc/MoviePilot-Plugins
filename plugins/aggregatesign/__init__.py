@@ -1,10 +1,10 @@
 """
 聚合签到插件
-版本: 1.6
+版本: 1.7
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
-- 支持聚影自动登录、癫影 Cookie 签到、定时任务、失败重试、通知和历史记录
+- 支持聚影、癫影自动登录和 Cookie 签到、定时任务、失败重试、通知和历史记录
 """
 
 import json
@@ -37,7 +37,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "1.6"
+    plugin_version = "1.7"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -84,7 +84,7 @@ class AggregateSign(_PluginBase):
             "name": "癫影",
             "base_url": "https://m.dian115.com",
             "methods": ["normal"],
-            "auto_login": False,
+            "auto_login": True,
             "checkin_path": "/me/signin",
             "login_path": "/login",
         },
@@ -102,7 +102,9 @@ class AggregateSign(_PluginBase):
         {
             "site": "dian115",
             "name": "癫影账号1",
-            "cookie": "portal_token=这里填手动登录后的Cookie",
+            "username": "你的邮箱",
+            "password": "你的密码",
+            "cookie": "",
             "methods": ["normal"]
         },
     ]
@@ -394,8 +396,6 @@ class AggregateSign(_PluginBase):
                     "storage_state": str(item.get("storage_state") or ""),
                     "methods": methods,
                 }
-                if site_key == "dian115" and not account["cookie"]:
-                    return [], f"第 {index} 个癫影账号只支持 Cookie，请手动登录后填写 cookie"
                 if not account["cookie"] and (not account["username"] or not account["password"]):
                     return [], f"第 {index} 个账号需填写 cookie，或同时填写 username/password"
                 account["key"] = self._account_key(account, index)
@@ -767,7 +767,9 @@ class AggregateSign(_PluginBase):
                                         "  {\n"
                                         "    \"site\": \"dian115\",\n"
                                         "    \"name\": \"癫影账号1\",\n"
-                                        "    \"cookie\": \"portal_token=这里填手动登录后的Cookie\",\n"
+                                        "    \"username\": \"你的邮箱\",\n"
+                                        "    \"password\": \"你的密码\",\n"
+                                        "    \"cookie\": \"\",\n"
                                         "    \"methods\": [\"normal\"]\n"
                                         "  }\n"
                                         "]"
@@ -851,7 +853,7 @@ class AggregateSign(_PluginBase):
                                 "props": {
                                     "type": "info",
                                     "variant": "tonal",
-                                    "text": "使用说明：只使用上方 JSON 多账号配置。site 支持 juying 和 dian115；juying 可填写 username/password 自动登录，也可填写 cookie；dian115 只支持手动登录后填写 cookie。methods 支持 normal；dian115 还支持 lucky（运气签到可能扣积分，不建议默认开启）。",
+                                    "text": "使用说明：只使用上方 JSON 多账号配置。site 支持 juying 和 dian115；两个站点都可填写 username/password 自动登录，也可填写 cookie。methods 支持 normal；dian115 还支持 lucky（运气签到可能扣积分，不建议默认开启）。",
                                 },
                             }],
                         }],
