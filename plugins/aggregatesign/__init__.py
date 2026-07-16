@@ -1,6 +1,6 @@
 """
 聚合签到插件
-版本: 1.8
+版本: 1.9
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
@@ -37,7 +37,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "1.8"
+    plugin_version = "1.9"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -301,6 +301,10 @@ class AggregateSign(_PluginBase):
                         self._save_sign_history(sign_dict)
                         self._send_sign_notification(sign_dict)
                         return sign_dict
+                    logger.error(
+                        f"{self._current_site_name}刷新登录态后签到仍失败，"
+                        f"account={self._current_account_name}: {message}"
+                    )
                 else:
                     message = f"{message}；自动登录失败: {login_message}"
 
@@ -879,7 +883,7 @@ class AggregateSign(_PluginBase):
                                 "props": {
                                     "type": "info",
                                     "variant": "tonal",
-                                    "text": "使用说明：只使用上方 JSON 多账号配置。site 支持 juying、dian115 和 hdhive；三个站点都可填写 username/password 自动登录，也可填写 cookie。methods 支持 normal；dian115 还支持 lucky，hdhive 还支持 gamble（风险签到可能扣积分，不建议默认开启）。",
+                                    "text": "使用说明：只使用上方 JSON 多账号配置。site 支持 juying、dian115 和 hdhive；三个站点都可填写 username/password 自动登录。影巢登录态绑定浏览器环境，推荐使用账号密码，插件会保存完整浏览器状态。methods 支持 normal；dian115 还支持 lucky，hdhive 还支持 gamble（风险签到可能扣积分，不建议默认开启）。",
                                 },
                             }],
                         }],

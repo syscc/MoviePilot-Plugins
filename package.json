@@ -3,7 +3,7 @@
     "name": "聚合签到",
     "description": "聚合多个站点的每日签到，支持多账号、多站点、自动登录、Cookie 登录态、定时任务和失败重试。",
     "labels": "聚合,签到,站点",
-    "version": "1.8",
+    "version": "1.9",
     "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png",
     "author": "syscc",
     "homepage": "https://github.com/syscc/MoviePilot-Plugins",
@@ -11,6 +11,7 @@
     "level": 2,
     "v2": true,
     "history": {
+      "1.9": "影巢改为动态获取 Server Action 直接签到，保存含 IndexedDB 的完整登录态，并修复重复签到误判。",
       "1.8": "新增影巢签到，支持账号密码自动登录、Cookie 失效自动刷新、普通签到和赌狗签到。",
       "1.7": "癫影支持账号密码自动登录获取 Cookie，Cookie 失效后可自动重新登录并回写配置。",
       "1.6": "调整聚影无 Cookie 时的自动登录顺序，避免当天已签到历史导致跳过登录，并增强重复签到通知的数据回填。",

@@ -168,7 +168,17 @@ class AggregateSignClient:
         self,
         playwright: Any,
         proxy: Optional[Dict[str, str]] = None,
+        storage_state: str = "",
     ) -> Tuple[Any, Any]:
+        state: Optional[Dict[str, Any]] = None
+        if storage_state:
+            try:
+                parsed_state = json.loads(storage_state)
+                if isinstance(parsed_state, dict):
+                    state = parsed_state
+            except Exception:
+                state = None
+
         if cloak_launch_context is not None:
             kwargs: Dict[str, Any] = {
                 "headless": self._headless,
@@ -179,7 +189,13 @@ class AggregateSignClient:
             }
             if proxy:
                 kwargs["proxy"] = proxy
-            context = cloak_launch_context(**kwargs)
+            if state:
+                kwargs["storage_state"] = state
+            try:
+                context = cloak_launch_context(**kwargs)
+            except TypeError:
+                kwargs.pop("storage_state", None)
+                context = cloak_launch_context(**kwargs)
             return context, context
 
         browser = playwright.chromium.launch(
@@ -187,11 +203,16 @@ class AggregateSignClient:
             args=AggregateSignClient._chromium_launch_args(),
             proxy=proxy,
         )
+        context_kwargs: Dict[str, Any] = {
+            "user_agent": self._UA,
+            "locale": "zh-CN",
+            "timezone_id": "Asia/Shanghai",
+            "viewport": {"width": 1280, "height": 720},
+        }
+        if state:
+            context_kwargs["storage_state"] = state
         context = browser.new_context(
-            user_agent=self._UA,
-            locale="zh-CN",
-            timezone_id="Asia/Shanghai",
-            viewport={"width": 1280, "height": 720},
+            **context_kwargs,
         )
         return browser, context
 
@@ -535,29 +556,28 @@ class AggregateSignClient:
             return err.code, err.read().decode("utf-8", errors="replace")
 
     @staticmethod
-    def _hdhive_response_result(response: Any) -> Tuple[bool, str]:
-        status = getattr(response, "status", 0)
+    def _hdhive_result(data: Dict[str, Any], status: int = 200) -> Tuple[bool, str]:
         if status in (401, 403):
             return False, "Cookie 无效或登录已过期"
-        try:
-            data = response.json()
-        except Exception:
-            try:
-                data = json.loads(response.text() or "{}")
-            except Exception:
-                data = {}
         if not isinstance(data, dict):
             return False, f"影巢签到返回格式异常，HTTP {status}"
         payload = data.get("data") if isinstance(data.get("data"), dict) else data
+        error = data.get("error") if isinstance(data.get("error"), dict) else {}
+        payload_error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
         message = str(
-            payload.get("message")
-            or payload.get("description")
-            or data.get("message")
+            payload.get("description")
+            or payload.get("message")
+            or payload_error.get("description")
+            or payload_error.get("message")
             or data.get("description")
+            or data.get("message")
+            or error.get("description")
+            or error.get("message")
             or ""
         )
         already_signed = any(
-            keyword in message for keyword in ("已经签到", "签到过", "已签到", "明天再来")
+            keyword in message
+            for keyword in ("已经签到", "已经签到过", "签到过", "已签到", "明天再来")
         )
         success = bool(data.get("success") or payload.get("success")) or already_signed
         if not message:
@@ -565,13 +585,86 @@ class AggregateSignClient:
         return success, message
 
     @staticmethod
+    def _hdhive_parse_rsc_result(text: str) -> Dict[str, Any]:
+        for line in (text or "").splitlines():
+            if ":{" not in line:
+                continue
+            try:
+                result = json.loads(line.split(":", 1)[1])
+            except Exception:
+                continue
+            if not isinstance(result, dict):
+                continue
+            if isinstance(result.get("error"), dict):
+                return result["error"]
+            if isinstance(result.get("response"), dict):
+                return result["response"]
+            if any(key in result for key in ("success", "message", "description")):
+                return result
+        return {}
+
+    @staticmethod
     def _compact_page_text(text: str, limit: int = 300) -> str:
         value = " ".join(str(text or "").split())
         return f"{value[:limit]}..." if len(value) > limit else value
 
+    @staticmethod
+    def _hdhive_action_hash(page: Any) -> str:
+        return str(page.evaluate(
+            """
+            async () => {
+              const pattern = /createServerReference\\)\\(\\s*[\"']([0-9a-f]{40,})[\"'][^\"']*[\"']checkIn[\"']/;
+              const urls = new Set([
+                ...Array.from(document.scripts).map(script => script.src),
+                ...performance.getEntriesByType('resource').map(entry => entry.name),
+              ].filter(url => url.includes('/_next/static/chunks/') && url.endsWith('.js')));
+              for (const url of urls) {
+                try {
+                  const source = await (await fetch(url)).text();
+                  const match = source.match(pattern);
+                  if (match) return match[1];
+                } catch (_) {}
+              }
+              return '';
+            }
+            """
+        ) or "")
+
+    @staticmethod
+    def _hdhive_direct_checkin(page: Any, action_hash: str, gamble: bool) -> Tuple[bool, str]:
+        result = page.evaluate(
+            """
+            async ({ actionHash, gamble }) => {
+              const response = await fetch('/', {
+                method: 'POST',
+                headers: {
+                  'Accept': 'text/x-component',
+                  'Content-Type': 'text/plain;charset=UTF-8',
+                  'next-action': actionHash,
+                },
+                body: JSON.stringify([gamble]),
+              });
+              const text = await response.text();
+              const businessLines = text.split('\\n').filter(line =>
+                /^\\w+:\\{/.test(line) &&
+                /\"(error|response|success|message|description)\"/.test(line)
+              );
+              return { status: response.status, text: businessLines.join('\\n') };
+            }
+            """,
+            {"actionHash": action_hash, "gamble": gamble},
+        )
+        status = int(result.get("status") or 0) if isinstance(result, dict) else 0
+        text = str(result.get("text") or "") if isinstance(result, dict) else ""
+        data = AggregateSignClient._hdhive_parse_rsc_result(text)
+        if not data:
+            return False, f"影巢签到返回格式异常，HTTP {status}"
+        return AggregateSignClient._hdhive_result(data, status)
+
     def _hdhive_checkin(
         self,
         cookie_str: str,
+        storage_state: str = "",
         methods: Optional[list[str]] = None,
     ) -> Tuple[bool, str]:
         cookies = self._parse_cookie_str(cookie_str)
@@ -580,12 +673,15 @@ class AggregateSignClient:
         methods = methods or ["normal"]
         gamble = any(str(method).lower() == "gamble" for method in methods)
         label = "赌狗签到" if gamble else "每日签到"
-        endpoint = "/api/customer/user/checkin"
         try:
             with AggregateSignClient._browser_runtime() as playwright:
                 with AggregateSignClient._socks5_slippers_if_needed() as slip:
                     proxy = slip if slip is not None else AggregateSignClient._playwright_proxy_settings()
-                    browser, context = self._make_context(playwright, proxy)
+                    browser, context = self._make_context(
+                        playwright,
+                        proxy,
+                        storage_state=storage_state,
+                    )
                     try:
                         self._add_cookies(context, cookie_str)
                         page = context.new_page()
@@ -596,6 +692,17 @@ class AggregateSignClient:
                         page_text = self._extract_page_message(page)
                         if self._is_already_signed_text(page_text):
                             return True, "今日已签到"
+
+                        action_hash = self._hdhive_action_hash(page)
+                        if action_hash:
+                            return self._hdhive_direct_checkin(page, action_hash, gamble)
+
+                        user_menu = page.locator("button[aria-label='用户菜单']").first
+                        try:
+                            if user_menu.count() > 0 and user_menu.is_visible():
+                                user_menu.click(timeout=10000)
+                        except Exception:
+                            pass
 
                         labels = ("赌狗签到", "赌狗") if gamble else ("每日签到", "立即签到", "签到")
                         button = None
@@ -628,33 +735,14 @@ class AggregateSignClient:
                         if button is None:
                             return False, f"未找到{label}按钮，影巢页面可能已更新"
 
-                        try:
-                            with page.expect_response(
-                                lambda response: endpoint in response.url,
-                                timeout=30000,
-                            ) as response_info:
-                                button.click(timeout=10000)
-                                dialog = page.locator("[role='dialog']").last
-                                try:
-                                    if dialog.count() > 0 and dialog.is_visible():
-                                        for confirm_text in ("确认", "确定", "继续"):
-                                            confirm = dialog.locator("button").filter(
-                                                has_text=re.compile(rf"^\s*{confirm_text}\s*$")
-                                            ).first
-                                            if confirm.count() > 0 and confirm.is_visible():
-                                                confirm.click(timeout=10000)
-                                                break
-                                except Exception:
-                                    pass
-                            return self._hdhive_response_result(response_info.value)
-                        except PlaywrightTimeoutError:
-                            page.wait_for_timeout(1500)
-                            result_text = self._extract_page_message(page)
-                            if self._is_already_signed_text(result_text):
-                                return True, self._compact_page_text(result_text)
-                            if any(keyword in result_text for keyword in ("签到成功", "获得", "积分")):
-                                return True, self._compact_page_text(result_text)
-                            return False, f"{label}后未捕获到签到接口响应"
+                        button.click(timeout=10000)
+                        page.wait_for_timeout(4000)
+                        result_text = self._extract_page_message(page)
+                        if self._is_already_signed_text(result_text):
+                            return True, self._compact_page_text(result_text)
+                        if any(keyword in result_text for keyword in ("签到成功", "获得", "积分")):
+                            return True, self._compact_page_text(result_text)
+                        return False, f"{label}后未识别到签到结果"
                     finally:
                         browser.close()
         except AggregateSignBrowserError as err:
@@ -780,6 +868,10 @@ class AggregateSignClient:
     @staticmethod
     def _extract_page_message(page: Any) -> str:
         selectors = [
+            "[role='alert']",
+            ".MuiAlert-message",
+            ".MuiSnackbar-root",
+            ".Toastify__toast-body",
             ".n-message",
             ".n-notification",
             ".n-alert",
@@ -809,7 +901,11 @@ class AggregateSignClient:
         if self.site_key == "dian115":
             return self._dian115_checkin(cookie_str=cookie_str, methods=methods)
         if self.site_key == "hdhive":
-            return self._hdhive_checkin(cookie_str=cookie_str, methods=methods)
+            return self._hdhive_checkin(
+                cookie_str=cookie_str,
+                storage_state=storage_state,
+                methods=methods,
+            )
 
         if not cookie_str:
             return False, "未配置 Cookie"
@@ -920,7 +1016,14 @@ class AggregateSignClient:
                         if self.site_key == "hdhive" and "token" not in self._parse_cookie_str(cookie_str):
                             return False, "", "", "影巢登录后未获取到 token Cookie"
                         try:
-                            storage_state = json.dumps(context.storage_state(), ensure_ascii=False)
+                            if self.site_key == "hdhive":
+                                try:
+                                    state = context.storage_state(indexed_db=True)
+                                except TypeError:
+                                    state = context.storage_state()
+                            else:
+                                state = context.storage_state()
+                            storage_state = json.dumps(state, ensure_ascii=False)
                         except Exception:
                             storage_state = ""
                         return True, cookie_str, storage_state, "登录成功"

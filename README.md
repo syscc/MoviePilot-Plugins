@@ -53,11 +53,11 @@
 | --- | --- | --- | --- |
 | `juying` | `https://share.huamucang.top` | 账号密码自动登录或 Cookie | `normal` |
 | `dian115` | `https://m.dian115.com` | 账号密码自动登录或 Cookie | `normal` 普通签到、`lucky` 运气签到 |
-| `hdhive` | `https://hdhive.com` | 账号密码自动登录或 Cookie | `normal` 普通签到、`gamble` 赌狗签到 |
+| `hdhive` | `https://hdhive.com` | 账号密码自动登录（推荐）或完整浏览器登录态 | `normal` 普通签到、`gamble` 赌狗签到 |
 
 ## 登录方式
 
-聚影、癫影和影巢都可以填写 `username` 和 `password`，插件会自动登录获取 Cookie；也可以只填写 Cookie。
+聚影、癫影和影巢都可以填写 `username` 和 `password`，插件会自动登录获取并保存登录态。聚影和癫影也可以只填写 Cookie；影巢会把安全绑定数据保存在 IndexedDB，单独复制 Cookie 到其他浏览器环境可能被站点判定为失效，因此建议使用账号密码自动登录。
 
 复制 Cookie 的通用步骤：
 
@@ -121,7 +121,7 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
 - 账号填写 `username` 和 `password` 时，`cookie` 可以留空。自动登录成功后，插件会把获取到的 `cookie` 和 `storage_state` 回写到该账号配置中。
 - 癫影 `methods` 设置为 `lucky` 时可能扣积分，不建议默认开启。
 - 影巢 `methods` 设置为 `gamble` 时启用赌狗签到，可能产生积分风险，不建议默认开启；若数组中同时存在其他方式，影巢只执行赌狗签到一次。
-- 影巢当前签到接口需要站点前端完成请求签名，因此签到和账号密码登录都依赖 MoviePilot 运行环境中的 CloakBrowser 或 Playwright。
+- 影巢当前签到接口需要站点前端完成请求签名，因此签到和账号密码登录都依赖 MoviePilot 运行环境中的 CloakBrowser 或 Playwright；自动登录后插件会保存包含 IndexedDB 的完整浏览器状态。
 - 每个账号的 Cookie、登录态、签到历史、连续天数、站点用户信息和通知都会独立处理。
 
 ## 仓库结构
