@@ -2,7 +2,7 @@
 
 这是一个用于 MoviePilot 的第三方插件仓库，目前维护 `AggregateSign` 和 `MessageNotify`。
 
-其中聚合签到插件使用 JSON 多账号配置统一管理多个站点，当前支持聚影和癫影。两个站点均支持账号密码自动登录或 Cookie 登录态。
+其中聚合签到插件使用 JSON 多账号配置统一管理多个站点，当前支持聚影、癫影和影巢。三个站点均支持账号密码自动登录或 Cookie 登录态。
 
 ## 插件列表
 
@@ -53,10 +53,11 @@
 | --- | --- | --- | --- |
 | `juying` | `https://share.huamucang.top` | 账号密码自动登录或 Cookie | `normal` |
 | `dian115` | `https://m.dian115.com` | 账号密码自动登录或 Cookie | `normal` 普通签到、`lucky` 运气签到 |
+| `hdhive` | `https://hdhive.com` | 账号密码自动登录或 Cookie | `normal` 普通签到、`gamble` 赌狗签到 |
 
 ## 登录方式
 
-聚影和癫影都可以填写 `username` 和 `password`，插件会自动登录获取 Cookie；也可以只填写 Cookie。
+聚影、癫影和影巢都可以填写 `username` 和 `password`，插件会自动登录获取 Cookie；也可以只填写 Cookie。
 
 复制 Cookie 的通用步骤：
 
@@ -90,6 +91,14 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
     "password": "你的密码",
     "cookie": "",
     "methods": ["normal"]
+  },
+  {
+    "site": "hdhive",
+    "name": "影巢账号1",
+    "username": "你的用户名或邮箱",
+    "password": "你的密码",
+    "cookie": "",
+    "methods": ["normal"]
   }
 ]
 ```
@@ -98,11 +107,11 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
 
 | 字段 | 说明 |
 | --- | --- |
-| `site` | 站点标志，支持 `juying`、`dian115` |
+| `site` | 站点标志，支持 `juying`、`dian115`、`hdhive` |
 | `name` | 账号显示名，用于历史和通知 |
-| `username` / `password` | 用于自动登录获取 Cookie，聚影和癫影均可用 |
+| `username` / `password` | 用于自动登录获取 Cookie，三个站点均可用 |
 | `cookie` | 完整 Cookie，可选；留空时会尝试用账号密码自动登录 |
-| `methods` | 签到方式数组。`normal` 为普通签到；癫影还支持 `lucky` 运气签到 |
+| `methods` | 签到方式数组。`normal` 为普通签到；癫影支持 `lucky`，影巢支持 `gamble` |
 
 多账号执行规则：
 
@@ -111,6 +120,8 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
 - 单个账号失败后会按“失败重试间隔”等待后重试，默认 3 分钟。
 - 账号填写 `username` 和 `password` 时，`cookie` 可以留空。自动登录成功后，插件会把获取到的 `cookie` 和 `storage_state` 回写到该账号配置中。
 - 癫影 `methods` 设置为 `lucky` 时可能扣积分，不建议默认开启。
+- 影巢 `methods` 设置为 `gamble` 时启用赌狗签到，可能产生积分风险，不建议默认开启；若数组中同时存在其他方式，影巢只执行赌狗签到一次。
+- 影巢当前签到接口需要站点前端完成请求签名，因此签到和账号密码登录都依赖 MoviePilot 运行环境中的 CloakBrowser 或 Playwright。
 - 每个账号的 Cookie、登录态、签到历史、连续天数、站点用户信息和通知都会独立处理。
 
 ## 仓库结构

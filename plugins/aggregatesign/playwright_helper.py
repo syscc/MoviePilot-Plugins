@@ -1,9 +1,11 @@
 __all__ = ["AggregateSignClient", "AggregateSignBrowserError"]
 
+import base64
 from contextlib import contextmanager
 from http.cookiejar import Cookie, CookieJar
 from http.cookies import SimpleCookie
 import json
+import re
 from socket import AF_INET, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET, socket
 from sys import platform
 from typing import Any, Dict, Iterator, Optional, Tuple
@@ -55,7 +57,11 @@ class AggregateSignClient:
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.site_key = site_key or "juying"
-        self.checkin_path = checkin_path or ("/me/signin" if self.site_key == "dian115" else "/checkin")
+        default_checkin_path = {
+            "dian115": "/me/signin",
+            "hdhive": "/",
+        }.get(self.site_key, "/checkin")
+        self.checkin_path = checkin_path or default_checkin_path
         self.login_path = login_path or "/login"
         self._headless = headless
 
@@ -502,6 +508,204 @@ class AggregateSignClient:
     def _dian115_method_name(method: str) -> str:
         return "运气签到" if method == "lucky" else "普通签到"
 
+    def _hdhive_request(
+        self,
+        url: str,
+        cookie_str: str,
+        headers: Dict[str, str],
+        method: str = "GET",
+        body: Optional[bytes] = None,
+    ) -> Tuple[int, str]:
+        cookie_jar = CookieJar()
+        domain = urlparse(self.base_url).hostname or "hdhive.com"
+        for name, value in self._parse_cookie_str(cookie_str).items():
+            cookie_jar.set_cookie(self._make_cookie(name, value, domain))
+
+        handlers = [HTTPCookieProcessor(cookie_jar)]
+        proxy = AggregateSignClient._urllib_proxy_handler()
+        if proxy:
+            handlers.append(proxy)
+        opener = build_opener(*handlers)
+        request = Request(url, data=body, method=method, headers=headers)
+        try:
+            response = opener.open(request, timeout=30)
+            with response:
+                return response.status, response.read().decode("utf-8", errors="replace")
+        except HTTPError as err:
+            return err.code, err.read().decode("utf-8", errors="replace")
+
+    @staticmethod
+    def _hdhive_response_result(response: Any) -> Tuple[bool, str]:
+        status = getattr(response, "status", 0)
+        if status in (401, 403):
+            return False, "Cookie 无效或登录已过期"
+        try:
+            data = response.json()
+        except Exception:
+            try:
+                data = json.loads(response.text() or "{}")
+            except Exception:
+                data = {}
+        if not isinstance(data, dict):
+            return False, f"影巢签到返回格式异常，HTTP {status}"
+        payload = data.get("data") if isinstance(data.get("data"), dict) else data
+        message = str(
+            payload.get("message")
+            or payload.get("description")
+            or data.get("message")
+            or data.get("description")
+            or ""
+        )
+        already_signed = any(
+            keyword in message for keyword in ("已经签到", "签到过", "已签到", "明天再来")
+        )
+        success = bool(data.get("success") or payload.get("success")) or already_signed
+        if not message:
+            message = "签到成功" if success else f"影巢签到失败，HTTP {status}"
+        return success, message
+
+    @staticmethod
+    def _compact_page_text(text: str, limit: int = 300) -> str:
+        value = " ".join(str(text or "").split())
+        return f"{value[:limit]}..." if len(value) > limit else value
+
+    def _hdhive_checkin(
+        self,
+        cookie_str: str,
+        methods: Optional[list[str]] = None,
+    ) -> Tuple[bool, str]:
+        cookies = self._parse_cookie_str(cookie_str)
+        if not cookies.get("token"):
+            return False, "Cookie 缺少 token，登录已失效或 Cookie 不完整"
+        methods = methods or ["normal"]
+        gamble = any(str(method).lower() == "gamble" for method in methods)
+        label = "赌狗签到" if gamble else "每日签到"
+        endpoint = "/api/customer/user/checkin"
+        try:
+            with AggregateSignClient._browser_runtime() as playwright:
+                with AggregateSignClient._socks5_slippers_if_needed() as slip:
+                    proxy = slip if slip is not None else AggregateSignClient._playwright_proxy_settings()
+                    browser, context = self._make_context(playwright, proxy)
+                    try:
+                        self._add_cookies(context, cookie_str)
+                        page = context.new_page()
+                        self._goto_page(page, self.base_url, wait_until="networkidle")
+                        if "/login" in page.url:
+                            return False, "Cookie 无效或登录已过期，站点跳转到登录页"
+
+                        page_text = self._extract_page_message(page)
+                        if self._is_already_signed_text(page_text):
+                            return True, "今日已签到"
+
+                        labels = ("赌狗签到", "赌狗") if gamble else ("每日签到", "立即签到", "签到")
+                        button = None
+                        for button_text in labels:
+                            locator = page.locator("button").filter(
+                                has_text=re.compile(rf"^\s*{re.escape(button_text)}\s*$")
+                            ).first
+                            try:
+                                if locator.count() > 0 and locator.is_visible():
+                                    button = locator
+                                    break
+                            except Exception:
+                                continue
+                        if button is None:
+                            buttons = page.locator("button")
+                            for index in range(buttons.count()):
+                                candidate = buttons.nth(index)
+                                try:
+                                    text = (candidate.inner_text(timeout=1000) or "").strip()
+                                    matches_mode = (
+                                        "赌狗" in text
+                                        if gamble
+                                        else "签到" in text and "赌狗" not in text
+                                    )
+                                    if matches_mode and candidate.is_visible():
+                                        button = candidate
+                                        break
+                                except Exception:
+                                    continue
+                        if button is None:
+                            return False, f"未找到{label}按钮，影巢页面可能已更新"
+
+                        try:
+                            with page.expect_response(
+                                lambda response: endpoint in response.url,
+                                timeout=30000,
+                            ) as response_info:
+                                button.click(timeout=10000)
+                                dialog = page.locator("[role='dialog']").last
+                                try:
+                                    if dialog.count() > 0 and dialog.is_visible():
+                                        for confirm_text in ("确认", "确定", "继续"):
+                                            confirm = dialog.locator("button").filter(
+                                                has_text=re.compile(rf"^\s*{confirm_text}\s*$")
+                                            ).first
+                                            if confirm.count() > 0 and confirm.is_visible():
+                                                confirm.click(timeout=10000)
+                                                break
+                                except Exception:
+                                    pass
+                            return self._hdhive_response_result(response_info.value)
+                        except PlaywrightTimeoutError:
+                            page.wait_for_timeout(1500)
+                            result_text = self._extract_page_message(page)
+                            if self._is_already_signed_text(result_text):
+                                return True, self._compact_page_text(result_text)
+                            if any(keyword in result_text for keyword in ("签到成功", "获得", "积分")):
+                                return True, self._compact_page_text(result_text)
+                            return False, f"{label}后未捕获到签到接口响应"
+                    finally:
+                        browser.close()
+        except AggregateSignBrowserError as err:
+            return False, str(err)
+        except Exception as err:
+            return False, f"影巢签到异常: {err}"
+
+    @staticmethod
+    def _jwt_subject(token: str) -> str:
+        try:
+            payload = token.split(".", 2)[1]
+            payload += "=" * (-len(payload) % 4)
+            decoded = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")).decode("utf-8"))
+            return str(decoded.get("sub") or decoded.get("user_id") or "")
+        except Exception:
+            return ""
+
+    def _hdhive_profile(self, cookie_str: str) -> Dict[str, Any]:
+        cookies = self._parse_cookie_str(cookie_str)
+        token = cookies.get("token")
+        if not token:
+            return {}
+        user_id = self._jwt_subject(token)
+        profile_url = f"{self.base_url}/user/{user_id}" if user_id else f"{self.base_url}/"
+        headers = {
+            "User-Agent": self._UA,
+            "Accept": "text/x-component",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Origin": self.base_url,
+            "Referer": profile_url,
+            "rsc": "1",
+        }
+        status, text = self._hdhive_request(profile_url, cookie_str, headers)
+        if status >= 400:
+            return {}
+        profile: Dict[str, Any] = {}
+        patterns = {
+            "nickname": r'"nickname":"([^\"]+)"',
+            "points": r'"points":(-?\d+)',
+            "signin_days_total": r'"signin_days_total":(\d+)',
+        }
+        for key, pattern in patterns.items():
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            value: Any = match.group(1)
+            if key != "nickname":
+                value = int(value)
+            profile[key] = value
+        return profile
+
     def _login_by_api_cookie(self, username: str, password: str) -> Tuple[bool, str, str, str]:
         status, data, cookie_str = self._api_request_with_login_state(
             path="/api/app/login/",
@@ -532,6 +736,8 @@ class AggregateSignClient:
                 profile.update(user)
                 return profile
             return data
+        if self.site_key == "hdhive":
+            return self._hdhive_profile(cookie_str)
 
         token = self._token_from_storage_state(storage_state)
         status, data, _ = self._api_request_with_login_state(
@@ -602,6 +808,8 @@ class AggregateSignClient:
     ) -> Tuple[bool, str]:
         if self.site_key == "dian115":
             return self._dian115_checkin(cookie_str=cookie_str, methods=methods)
+        if self.site_key == "hdhive":
+            return self._hdhive_checkin(cookie_str=cookie_str, methods=methods)
 
         if not cookie_str:
             return False, "未配置 Cookie"
@@ -663,12 +871,13 @@ class AggregateSignClient:
         if self.site_key == "dian115":
             return self._dian115_login(username=username, password=password)
 
-        try:
-            success, cookie_str, storage_state, message = self._login_by_api_cookie(username, password)
-            if success:
-                return True, cookie_str, storage_state, message
-        except Exception as err:
-            message = f"登录接口异常: {err}"
+        if self.site_key != "hdhive":
+            try:
+                success, cookie_str, storage_state, message = self._login_by_api_cookie(username, password)
+                if success:
+                    return True, cookie_str, storage_state, message
+            except Exception as err:
+                message = f"登录接口异常: {err}"
 
         try:
             with AggregateSignClient._browser_runtime() as playwright:
@@ -708,6 +917,8 @@ class AggregateSignClient:
                         cookie_str = self._cookie_list_to_str(raw_cookies)
                         if not cookie_str:
                             return False, "", "", "登录后未获取到 Cookie"
+                        if self.site_key == "hdhive" and "token" not in self._parse_cookie_str(cookie_str):
+                            return False, "", "", "影巢登录后未获取到 token Cookie"
                         try:
                             storage_state = json.dumps(context.storage_state(), ensure_ascii=False)
                         except Exception:
