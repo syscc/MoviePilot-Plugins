@@ -1,6 +1,6 @@
 """
 聚合签到插件
-版本: 1.9
+版本: 2.0
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
@@ -37,7 +37,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "1.9"
+    plugin_version = "2.0"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -349,11 +349,27 @@ class AggregateSign(_PluginBase):
             checkin_path=site.get("checkin_path", ""),
             login_path=site.get("login_path", ""),
         )
-        return client.checkin(
+        success, message = client.checkin(
             cookie_str=self._cookie,
             storage_state=self._storage_state,
             methods=self._current_methods,
         )
+        updated_cookie, updated_storage_state = client.get_updated_login_state()
+        if self._current_site_key == "hdhive" and (updated_cookie or updated_storage_state):
+            if updated_cookie:
+                self._cookie = updated_cookie
+            if updated_storage_state:
+                self._storage_state = updated_storage_state
+            if self._current_account:
+                self._current_account["cookie"] = self._cookie
+                self._current_account["storage_state"] = self._storage_state
+                self._save_current_account_config()
+            self.update_config(self._build_config())
+            logger.info(
+                f"已更新影巢签到安全会话，account={self._current_account_name}, "
+                f"cookie_len={len(self._cookie)}, storage_state_len={len(self._storage_state)}"
+            )
+        return success, message
 
     def _auto_login(self) -> Tuple[bool, str]:
         if not self._username or not self._password:

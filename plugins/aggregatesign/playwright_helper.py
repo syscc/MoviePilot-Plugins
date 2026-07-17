@@ -64,6 +64,8 @@ class AggregateSignClient:
         self.checkin_path = checkin_path or default_checkin_path
         self.login_path = login_path or "/login"
         self._headless = headless
+        self._updated_cookie_str = ""
+        self._updated_storage_state = ""
 
     @staticmethod
     def _parse_cookie_str(cookie_str: str) -> Dict[str, str]:
@@ -620,7 +622,7 @@ class AggregateSignClient:
               ].filter(url => url.includes('/_next/static/chunks/') && url.endsWith('.js')));
               for (const url of urls) {
                 try {
-                  const source = await (await fetch(url)).text();
+                  const source = await (await fetch(url, { cache: 'no-store' })).text();
                   const match = source.match(pattern);
                   if (match) return match[1];
                 } catch (_) {}
@@ -631,7 +633,11 @@ class AggregateSignClient:
         ) or "")
 
     @staticmethod
-    def _hdhive_direct_checkin(page: Any, action_hash: str, gamble: bool) -> Tuple[bool, str]:
+    def _hdhive_direct_checkin(
+        page: Any,
+        action_hash: str,
+        gamble: bool,
+    ) -> Tuple[bool, str, int]:
         result = page.evaluate(
             """
             async ({ actionHash, gamble }) => {
@@ -645,21 +651,54 @@ class AggregateSignClient:
                 body: JSON.stringify([gamble]),
               });
               const text = await response.text();
+              const contentType = response.headers.get('content-type') || '';
+              if (contentType.includes('application/json')) {
+                return { status: response.status, contentType, text };
+              }
               const businessLines = text.split('\\n').filter(line =>
                 /^\\w+:\\{/.test(line) &&
                 /\"(error|response|success|message|description)\"/.test(line)
               );
-              return { status: response.status, text: businessLines.join('\\n') };
+              return { status: response.status, contentType, text: businessLines.join('\\n') };
             }
             """,
             {"actionHash": action_hash, "gamble": gamble},
         )
         status = int(result.get("status") or 0) if isinstance(result, dict) else 0
         text = str(result.get("text") or "") if isinstance(result, dict) else ""
-        data = AggregateSignClient._hdhive_parse_rsc_result(text)
+        content_type = str(result.get("contentType") or "") if isinstance(result, dict) else ""
+        if "application/json" in content_type:
+            try:
+                data = json.loads(text or "{}")
+            except Exception:
+                data = {}
+        else:
+            data = AggregateSignClient._hdhive_parse_rsc_result(text)
         if not data:
-            return False, f"影巢签到返回格式异常，HTTP {status}"
-        return AggregateSignClient._hdhive_result(data, status)
+            return False, f"影巢签到返回格式异常，HTTP {status}", status
+        success, message = AggregateSignClient._hdhive_result(data, status)
+        if status >= 400 and f"HTTP {status}" not in message:
+            message = f"{message} (HTTP {status})"
+        return success, message, status
+
+    def _capture_hdhive_state(self, context: Any) -> None:
+        try:
+            cookie_str = self._cookie_list_to_str(context.cookies())
+            if self._parse_cookie_str(cookie_str).get("token"):
+                self._updated_cookie_str = cookie_str
+        except Exception:
+            pass
+        try:
+            try:
+                state = context.storage_state(indexed_db=True)
+            except TypeError:
+                state = context.storage_state()
+            self._updated_storage_state = json.dumps(state, ensure_ascii=False)
+        except Exception:
+            pass
+
+    def get_updated_login_state(self) -> Tuple[str, str]:
+        return self._updated_cookie_str, self._updated_storage_state
 
     def _hdhive_checkin(
         self,
@@ -695,7 +734,14 @@ class AggregateSignClient:
 
                         action_hash = self._hdhive_action_hash(page)
                         if action_hash:
-                            return self._hdhive_direct_checkin(page, action_hash, gamble)
+                            success, message, status = self._hdhive_direct_checkin(
+                                page,
+                                action_hash,
+                                gamble,
+                            )
+                            if status == 409:
+                                return False, f"登录安全会话已失效: {message}"
+                            return success, message
 
                         user_menu = page.locator("button[aria-label='用户菜单']").first
                         try:
@@ -744,6 +790,7 @@ class AggregateSignClient:
                             return True, self._compact_page_text(result_text)
                         return False, f"{label}后未识别到签到结果"
                     finally:
+                        self._capture_hdhive_state(context)
                         browser.close()
         except AggregateSignBrowserError as err:
             return False, str(err)
