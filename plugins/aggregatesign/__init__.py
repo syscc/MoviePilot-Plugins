@@ -1,6 +1,6 @@
 """
 聚合签到插件
-版本: 2.0
+版本: 2.1
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
@@ -37,7 +37,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "2.0"
+    plugin_version = "2.1"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -61,7 +61,7 @@ class AggregateSign(_PluginBase):
     _notify = True
     _onlyonce = False
     _cron = "0 8 * * *"
-    _base_url = "https://share.huamucang.top"
+    _base_url = "https://www.jying.top"
     _max_retries = 3
     _retry_interval_minutes = 3
     _retry_interval = 180
@@ -74,7 +74,7 @@ class AggregateSign(_PluginBase):
     _site_defaults = {
         "juying": {
             "name": "聚影",
-            "base_url": "https://share.huamucang.top",
+            "base_url": "https://www.jying.top",
             "methods": ["normal"],
             "auto_login": True,
             "checkin_path": "/checkin",
@@ -146,7 +146,10 @@ class AggregateSign(_PluginBase):
                 self._notify = self._as_bool(config.get("notify", True))
                 self._onlyonce = config.get("onlyonce", False)
                 self._cron = config.get("cron") or "0 8 * * *"
-                self._base_url = (config.get("base_url") or self._base_url).rstrip("/")
+                self._base_url = self._migrate_base_url(
+                    "juying",
+                    config.get("base_url") or self._base_url,
+                )
                 self._max_retries = max(0, int(config.get("max_retries", 3)))
                 self._retry_interval_minutes = self._parse_retry_interval_minutes(config)
                 self._retry_interval = self._retry_interval_minutes * 60
@@ -420,11 +423,15 @@ class AggregateSign(_PluginBase):
                 if not isinstance(methods, list) or not methods:
                     methods = site.get("methods") or ["normal"]
                 methods = [self._normalize_method(method) for method in methods]
+                base_url = self._migrate_base_url(
+                    site_key,
+                    item.get("base_url") or site.get("base_url") or "",
+                )
                 account = {
                     "site": site_key,
                     "site_name": site.get("name") or site_key,
                     "index": index,
-                    "base_url": str(item.get("base_url") or site.get("base_url") or "").rstrip("/"),
+                    "base_url": base_url,
                     "name": str(item.get("name") or item.get("username") or f"账号{index}").strip(),
                     "username": str(item.get("username") or "").strip(),
                     "password": str(item.get("password") or "").strip(),
@@ -526,6 +533,13 @@ class AggregateSign(_PluginBase):
         if value in ("lucky", "luck", "运气", "运气签到"):
             return "lucky"
         return "normal"
+
+    @staticmethod
+    def _migrate_base_url(site_key: str, base_url: Any) -> str:
+        value = str(base_url or "").rstrip("/")
+        if site_key == "juying" and value == "https://share.huamucang.top":
+            return "https://www.jying.top"
+        return value
 
     @staticmethod
     def _build_multi_result(results: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -914,7 +928,7 @@ class AggregateSign(_PluginBase):
             "username": "",
             "password": "",
             "accounts": self._default_accounts_text(),
-            "base_url": "https://share.huamucang.top",
+            "base_url": "https://www.jying.top",
             "cron": "0 8 * * *",
             "max_retries": 3,
             "retry_interval_minutes": 3,

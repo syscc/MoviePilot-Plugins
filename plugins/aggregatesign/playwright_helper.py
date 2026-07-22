@@ -49,7 +49,7 @@ class AggregateSignClient:
 
     def __init__(
         self,
-        base_url: str = "https://share.huamucang.top",
+        base_url: str = "https://www.jying.top",
         headless: bool = True,
         site_key: str = "juying",
         checkin_path: str = "",
@@ -283,9 +283,12 @@ class AggregateSignClient:
         try:
             self._goto_page(page, self.base_url)
             origin = self.base_url
+            compatible_origins = {origin}
+            if self.site_key == "juying" and origin == "https://www.jying.top":
+                compatible_origins.add("https://share.huamucang.top")
             origins = state.get("origins") or []
             for item in origins:
-                if item.get("origin") != origin:
+                if item.get("origin") not in compatible_origins:
                     continue
                 for entry in item.get("localStorage") or []:
                     name = entry.get("name")
@@ -382,7 +385,7 @@ class AggregateSignClient:
         payload: Optional[Dict[str, Any]] = None,
     ) -> Tuple[int, Dict[str, Any], str]:
         cookie_jar = CookieJar()
-        domain = urlparse(self.base_url).hostname or "share.huamucang.top"
+        domain = urlparse(self.base_url).hostname or "www.jying.top"
         for name, value in self._parse_cookie_str(cookie_str).items():
             cookie_jar.set_cookie(self._make_cookie(name, value, domain))
 

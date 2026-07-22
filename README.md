@@ -51,7 +51,7 @@
 
 | site | 站点 | 登录方式 | 签到方式 |
 | --- | --- | --- | --- |
-| `juying` | `https://share.huamucang.top` | 账号密码自动登录或 Cookie | `normal` |
+| `juying` | `https://www.jying.top` | 账号密码自动登录或 Cookie | `normal` |
 | `dian115` | `https://m.dian115.com` | 账号密码自动登录或 Cookie | `normal` 普通签到、`lucky` 运气签到 |
 | `hdhive` | `https://hdhive.com` | 账号密码自动登录（推荐）或完整浏览器登录态 | `normal` 普通签到、`gamble` 赌狗签到 |
 
