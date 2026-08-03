@@ -1,6 +1,6 @@
 """
 聚合签到插件
-版本: 2.1
+版本: 2.2
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
@@ -37,7 +37,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "2.1"
+    plugin_version = "2.2"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -102,6 +102,7 @@ class AggregateSign(_PluginBase):
         {
             "site": "juying",
             "name": "聚影账号1",
+            "base_url": "https://www.jying.top",
             "username": "你的用户名或邮箱",
             "password": "你的密码",
             "cookie": "",
@@ -811,6 +812,7 @@ class AggregateSign(_PluginBase):
                                         "  {\n"
                                         "    \"site\": \"juying\",\n"
                                         "    \"name\": \"聚影账号1\",\n"
+                                        "    \"base_url\": \"https://www.jying.top\",\n"
                                         "    \"username\": \"你的用户名或邮箱\",\n"
                                         "    \"password\": \"你的密码\",\n"
                                         "    \"cookie\": \"\",\n"
@@ -913,7 +915,7 @@ class AggregateSign(_PluginBase):
                                 "props": {
                                     "type": "info",
                                     "variant": "tonal",
-                                    "text": "使用说明：只使用上方 JSON 多账号配置。site 支持 juying、dian115 和 hdhive；三个站点都可填写 username/password 自动登录。影巢登录态绑定浏览器环境，推荐使用账号密码，插件会保存完整浏览器状态。methods 支持 normal；dian115 还支持 lucky，hdhive 还支持 gamble（风险签到可能扣积分，不建议默认开启）。",
+                                    "text": "使用说明：只使用上方 JSON 多账号配置。聚影可通过 base_url 选择国内 https://jying.top 或国外 https://www.jying.top，不填默认使用国外入口。site 支持 juying、dian115 和 hdhive；三个站点都可填写 username/password 自动登录。影巢登录态绑定浏览器环境，推荐使用账号密码，插件会保存完整浏览器状态。methods 支持 normal；dian115 还支持 lucky，hdhive 还支持 gamble（风险签到可能扣积分，不建议默认开启）。",
                                 },
                             }],
                         }],

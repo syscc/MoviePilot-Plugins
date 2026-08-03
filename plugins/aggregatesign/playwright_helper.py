@@ -284,8 +284,12 @@ class AggregateSignClient:
             self._goto_page(page, self.base_url)
             origin = self.base_url
             compatible_origins = {origin}
-            if self.site_key == "juying" and origin == "https://www.jying.top":
-                compatible_origins.add("https://share.huamucang.top")
+            if self.site_key == "juying" and origin in ("https://jying.top", "https://www.jying.top"):
+                compatible_origins.update({
+                    "https://jying.top",
+                    "https://www.jying.top",
+                    "https://share.huamucang.top",
+                })
             origins = state.get("origins") or []
             for item in origins:
                 if item.get("origin") not in compatible_origins:
@@ -961,6 +965,16 @@ class AggregateSignClient:
             return False, "未配置 Cookie"
 
         try:
+            token = self._token_from_storage_state(storage_state)
+            auth_status, _, _ = self._api_request_with_login_state(
+                path="/api/app/profile/",
+                method="GET",
+                cookie_str=cookie_str,
+                token=token,
+            )
+            if auth_status in (401, 403):
+                return False, "Cookie 无效或登录已过期"
+
             with AggregateSignClient._browser_runtime() as playwright:
                 with AggregateSignClient._socks5_slippers_if_needed() as slip:
                     proxy = slip if slip is not None else AggregateSignClient._playwright_proxy_settings()

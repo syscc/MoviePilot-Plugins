@@ -40,7 +40,7 @@
 | 启用插件 | 开启后注册定时签到任务 |
 | 开启通知 | 签到成功、重复签到、失败和重试时发送站内通知 |
 | 立即运行一次 | 保存配置后立即执行一次签到 |
-| 多账号配置 | JSON 数组。唯一账号配置入口，支持 `site`、`name`、`username`、`password`、`cookie`、`methods` |
+| 多账号配置 | JSON 数组。唯一账号配置入口，支持 `site`、`name`、`base_url`、`username`、`password`、`cookie`、`methods` |
 | 签到周期 | Cron 表达式，默认每天 08:00 |
 | 最大重试次数 | 签到失败后的重试次数 |
 | 失败重试间隔 | 单个账号签到失败后，等待多少分钟再重试 |
@@ -51,7 +51,7 @@
 
 | site | 站点 | 登录方式 | 签到方式 |
 | --- | --- | --- | --- |
-| `juying` | `https://www.jying.top` | 账号密码自动登录或 Cookie | `normal` |
+| `juying` | 国内 `https://jying.top`；国外 `https://www.jying.top` | 账号密码自动登录或 Cookie | `normal` |
 | `dian115` | `https://m.dian115.com` | 账号密码自动登录或 Cookie | `normal` 普通签到、`lucky` 运气签到 |
 | `hdhive` | `https://hdhive.com` | 账号密码自动登录（推荐）或完整浏览器登录态 | `normal` 普通签到、`gamble` 赌狗签到 |
 
@@ -79,6 +79,7 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
   {
     "site": "juying",
     "name": "聚影账号1",
+    "base_url": "https://www.jying.top",
     "username": "你的用户名或邮箱",
     "password": "你的密码",
     "cookie": "",
@@ -109,6 +110,7 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
 | --- | --- |
 | `site` | 站点标志，支持 `juying`、`dian115`、`hdhive` |
 | `name` | 账号显示名，用于历史和通知 |
+| `base_url` | 站点入口。聚影国内入口填 `https://jying.top`，国外入口填 `https://www.jying.top`；聚影不填时默认使用国外入口 |
 | `username` / `password` | 用于自动登录获取 Cookie，三个站点均可用 |
 | `cookie` | 完整 Cookie，可选；留空时会尝试用账号密码自动登录 |
 | `methods` | 签到方式数组。`normal` 为普通签到；癫影支持 `lucky`，影巢支持 `gamble` |
@@ -119,6 +121,7 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
 - 两个账号之间会按“账号轮询间隔”等待，默认 10 秒。
 - 单个账号失败后会按“失败重试间隔”等待后重试，默认 3 分钟。
 - 账号填写 `username` 和 `password` 时，`cookie` 可以留空。自动登录成功后，插件会把获取到的 `cookie` 和 `storage_state` 回写到该账号配置中。
+- 聚影每个账号可独立配置 `base_url`，国内和国外入口可以混合使用；切换入口后若原登录态失效，会按账号密码自动重新登录并更新 Cookie。
 - 癫影 `methods` 设置为 `lucky` 时可能扣积分，不建议默认开启。
 - 影巢 `methods` 设置为 `gamble` 时启用赌狗签到，可能产生积分风险，不建议默认开启；若数组中同时存在其他方式，影巢只执行赌狗签到一次。
 - 影巢当前签到接口需要站点前端完成请求签名，因此签到和账号密码登录都依赖 MoviePilot 运行环境中的 CloakBrowser 或 Playwright；自动登录后插件会保存包含 IndexedDB 的完整浏览器状态。
