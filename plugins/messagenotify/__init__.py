@@ -18,7 +18,7 @@ class MessageNotify(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/messagenotify.png"
     # 插件版本
-    plugin_version = "1.0"
+    plugin_version = "1.0.1"
     # 插件作者
     plugin_author = "syscc"
     # 作者主页
@@ -550,7 +550,9 @@ class MessageNotify(_PluginBase):
                     logger.info(f"消息发送执行完成: 渠道 = {comp_obj.comp_name} success = {success}")
                 except Exception as e:
                     fail_count += 1
-                    logger.error(f"消息发送执行异常: 渠道 = {comp_obj.comp_name}", exc_info=True)
+                    logger.error(
+                        f"消息发送执行异常: 渠道 = {comp_obj.comp_name}, error_type = {type(e).__name__}"
+                    )
             logger.info(f'发送消息通知事件监听任务执行成功: 成功渠道数 = {success_count}, 失败渠道数 = {fail_count}')
         except Exception as e:
-            logger.error(f'发送消息通知事件监听任务执行异常: {str(e)}', exc_info=True)
+            logger.error(f'发送消息通知事件监听任务执行异常: error_type = {type(e).__name__}')

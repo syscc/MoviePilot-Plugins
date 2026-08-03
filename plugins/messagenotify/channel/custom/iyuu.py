@@ -101,7 +101,7 @@ class IYUUChannel(CustomChannel):
             return False
         send_url = self.__build_url()
         params = self.__build_params(title=title, text=text)
-        res = requests.post(url=send_url, params=params)
+        res = requests.post(url=send_url, params=params, timeout=self.REQUEST_TIMEOUT)
         res_json = res.json() or {}
         if res.ok or res_json:
             code = res_json.get("errcode")

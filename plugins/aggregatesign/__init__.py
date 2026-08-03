@@ -1,6 +1,6 @@
 """
 聚合签到插件
-版本: 2.2
+版本: 2.3
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
@@ -11,6 +11,7 @@ import json
 import re
 import time
 from datetime import datetime, timedelta
+from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytz
@@ -37,7 +38,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "2.2"
+    plugin_version = "2.3"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -67,9 +68,9 @@ class AggregateSign(_PluginBase):
     _retry_interval = 180
     _account_interval = 10
     _history_days = 30
-    _manual_trigger = False
     _scheduler: Optional[BackgroundScheduler] = None
     _current_trigger_type = None
+    _sign_lock = Lock()
 
     _site_defaults = {
         "juying": {
@@ -100,6 +101,7 @@ class AggregateSign(_PluginBase):
 
     _default_accounts = [
         {
+            "id": "juying-1",
             "site": "juying",
             "name": "聚影账号1",
             "base_url": "https://www.jying.top",
@@ -109,6 +111,7 @@ class AggregateSign(_PluginBase):
             "methods": ["normal"],
         },
         {
+            "id": "dian115-1",
             "site": "dian115",
             "name": "癫影账号1",
             "username": "你的邮箱",
@@ -117,6 +120,7 @@ class AggregateSign(_PluginBase):
             "methods": ["normal"],
         },
         {
+            "id": "hdhive-1",
             "site": "hdhive",
             "name": "影巢账号1",
             "username": "你的用户名或邮箱",
@@ -128,6 +132,10 @@ class AggregateSign(_PluginBase):
 
     def init_plugin(self, config: dict = None):
         self.stop_service()
+        with self._sign_lock:
+            self._init_plugin(config)
+
+    def _init_plugin(self, config: dict = None):
         logger.info("============= 聚合签到初始化 =============")
 
         try:
@@ -137,12 +145,6 @@ class AggregateSign(_PluginBase):
                 self._storage_state = config.get("storage_state") or ""
                 self._username = (config.get("username") or "").strip()
                 self._password = (config.get("password") or "").strip()
-                self._legacy_account = {
-                    "cookie": self._cookie,
-                    "storage_state": self._storage_state,
-                    "username": self._username,
-                    "password": self._password,
-                }
                 self._accounts_text = config.get("accounts") or ""
                 self._notify = self._as_bool(config.get("notify", True))
                 self._onlyonce = config.get("onlyonce", False)
@@ -151,6 +153,19 @@ class AggregateSign(_PluginBase):
                     "juying",
                     config.get("base_url") or self._base_url,
                 )
+                if self._accounts_text.strip() and self._base_url in {
+                    self._site_defaults["dian115"]["base_url"],
+                    self._site_defaults["hdhive"]["base_url"],
+                }:
+                    logger.info("检测到旧版本污染的顶层站点地址，已恢复为聚影默认入口")
+                    self._base_url = self._site_defaults["juying"]["base_url"]
+                self._legacy_account = {
+                    "cookie": self._cookie,
+                    "storage_state": self._storage_state,
+                    "username": self._username,
+                    "password": self._password,
+                    "base_url": self._base_url,
+                }
                 self._max_retries = max(0, int(config.get("max_retries", 3)))
                 self._retry_interval_minutes = self._parse_retry_interval_minutes(config)
                 self._retry_interval = self._retry_interval_minutes * 60
@@ -166,12 +181,12 @@ class AggregateSign(_PluginBase):
             if self._onlyonce:
                 logger.info("执行一次性聚合签到")
                 self._scheduler = BackgroundScheduler(timezone=settings.TZ)
-                self._manual_trigger = True
                 self._scheduler.add_job(
                     func=self.sign,
                     trigger="date",
                     run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
                     name="聚合签到",
+                    kwargs={"trigger_type": "手动触发"},
                 )
                 self._onlyonce = False
                 self.update_config(self._build_config(onlyonce=False))
@@ -182,9 +197,18 @@ class AggregateSign(_PluginBase):
         except Exception as e:
             logger.error(f"聚合签到初始化错误: {e}", exc_info=True)
 
-    def sign(self, retry_count: int = 0):
+    def sign(self, retry_count: int = 0, trigger_type: Optional[str] = None):
+        if not self._sign_lock.acquire(blocking=False):
+            active_trigger = self._current_trigger_type or "未知"
+            logger.warning(f"聚合签到任务正在执行，跳过重复触发，active_trigger={active_trigger}")
+            return {
+                "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
+                "status": "跳过: 签到任务正在执行",
+                "message": "已有聚合签到任务正在执行，本次触发已跳过",
+            }
+
         start_time = datetime.now()
-        self._current_trigger_type = "手动触发" if self._is_manual_trigger() else "定时触发"
+        self._current_trigger_type = trigger_type or "定时触发"
         logger.info(f"开始聚合签到，retry={retry_count}, trigger={self._current_trigger_type}")
 
         try:
@@ -235,7 +259,7 @@ class AggregateSign(_PluginBase):
             self._send_sign_notification(sign_dict)
             return sign_dict
         finally:
-            self._manual_trigger = False
+            self._sign_lock.release()
 
     def _sign_current_account(self, retry_count: int = 0):
         logger.info(
@@ -429,6 +453,7 @@ class AggregateSign(_PluginBase):
                     item.get("base_url") or site.get("base_url") or "",
                 )
                 account = {
+                    "id": str(item.get("id") or "").strip(),
                     "site": site_key,
                     "site_name": site.get("name") or site_key,
                     "index": index,
@@ -442,8 +467,27 @@ class AggregateSign(_PluginBase):
                 }
                 if not account["cookie"] and (not account["username"] or not account["password"]):
                     return [], f"第 {index} 个账号需填写 cookie，或同时填写 username/password"
-                account["key"] = self._account_key(account, index)
                 accounts.append(account)
+
+            used_keys = set()
+            for account in accounts:
+                base_key = self._account_key(account, int(account.get("index") or 0))
+                if base_key in used_keys:
+                    if account.get("id"):
+                        return [], f"账号 id 重复或规范化后冲突: {account['id']}"
+                    account_key = f"{base_key}_{account['index']}"
+                    suffix = 2
+                    while account_key in used_keys:
+                        account_key = f"{base_key}_{account['index']}_{suffix}"
+                        suffix += 1
+                    logger.warning(
+                        f"检测到重复账号标识，已按配置序号隔离数据: "
+                        f"site={account['site_name']}, account={account['name']}, index={account['index']}"
+                    )
+                else:
+                    account_key = base_key
+                account["key"] = account_key
+                used_keys.add(account_key)
             return accounts, ""
 
         legacy = {
@@ -483,46 +527,44 @@ class AggregateSign(_PluginBase):
         if not isinstance(raw_accounts, list):
             return
         target_index = int(self._current_account.get("index") or 0)
-        if 1 <= target_index <= len(raw_accounts):
-            item = raw_accounts[target_index - 1]
-            if isinstance(item, dict):
-                account_key = self._account_key({
-                    "site": str(item.get("site") or item.get("site_key") or "juying").strip().lower(),
-                    "name": str(item.get("name") or item.get("username") or f"账号{target_index}").strip(),
-                    "username": str(item.get("username") or "").strip(),
-                }, target_index)
-                if account_key == self._current_account_key:
-                    item["cookie"] = self._cookie
-                    item["storage_state"] = self._storage_state
-                    self._accounts_text = json.dumps(raw_accounts, ensure_ascii=False, indent=2)
-                    logger.info(
-                        f"已回写{self._current_site_name}登录态，account={self._current_account_name}, "
-                        f"index={target_index}, cookie_len={len(self._cookie)}, storage_state_len={len(self._storage_state)}"
-                    )
-                    return
+        if not 1 <= target_index <= len(raw_accounts):
+            logger.warning(f"登录态回写失败: 账号配置序号无效，index={target_index}")
+            return
 
-        for index, item in enumerate(raw_accounts, start=1):
-            if not isinstance(item, dict):
-                continue
-            account_key = self._account_key({
-                "site": str(item.get("site") or item.get("site_key") or "juying").strip().lower(),
-                "name": str(item.get("name") or item.get("username") or f"账号{index}").strip(),
-                "username": str(item.get("username") or "").strip(),
-            }, index)
-            if account_key == self._current_account_key:
-                item["cookie"] = self._cookie
-                item["storage_state"] = self._storage_state
-                logger.info(
-                    f"已回写{self._current_site_name}登录态，account={self._current_account_name}, "
-                    f"index={index}, cookie_len={len(self._cookie)}, storage_state_len={len(self._storage_state)}"
-                )
-                break
+        item = raw_accounts[target_index - 1]
+        if not isinstance(item, dict):
+            logger.warning(f"登录态回写失败: 账号配置不是对象，index={target_index}")
+            return
+
+        item_site = str(item.get("site") or item.get("site_key") or "juying").strip().lower()
+        current_id = str(self._current_account.get("id") or "").strip()
+        item_id = str(item.get("id") or "").strip()
+        item_name = str(item.get("name") or item.get("username") or f"账号{target_index}").strip()
+        item_username = str(item.get("username") or "").strip()
+        if (
+            item_site != self._current_site_key
+            or (current_id and item_id != current_id)
+            or (not current_id and (
+                item_name != str(self._current_account.get("name") or "").strip()
+                or item_username != str(self._current_account.get("username") or "").strip()
+            ))
+        ):
+            logger.warning(f"登录态回写失败: 账号配置在执行期间发生变化，index={target_index}")
+            return
+
+        item["cookie"] = self._cookie
+        item["storage_state"] = self._storage_state
         self._accounts_text = json.dumps(raw_accounts, ensure_ascii=False, indent=2)
+        logger.info(
+            f"已回写{self._current_site_name}登录态，account={self._current_account_name}, "
+            f"index={target_index}, cookie_len={len(self._cookie)}, storage_state_len={len(self._storage_state)}"
+        )
 
     @staticmethod
     def _account_key(account: Dict[str, Any], index: int) -> str:
         site = str(account.get("site") or "juying").strip()
-        raw = f"{site}_{account.get('name') or account.get('username') or f'account_{index}'}".strip()
+        identity = account.get("id") or account.get("name") or account.get("username") or f"account_{index}"
+        raw = f"{site}_{identity}".strip()
         key = re.sub(r"[^0-9A-Za-z_\-\u4e00-\u9fff]+", "_", raw)
         return key or f"account_{index}"
 
@@ -581,7 +623,10 @@ class AggregateSign(_PluginBase):
         self._password = self._legacy_account.get("password", "")
         self._current_account_name = self._username or "默认账号"
         self._current_methods = ["normal"]
-        self._base_url = self._site_defaults["juying"]["base_url"]
+        self._base_url = self._migrate_base_url(
+            "juying",
+            self._legacy_account.get("base_url") or self._site_defaults["juying"]["base_url"],
+        )
 
     def _data_key(self, key: str) -> str:
         if self._current_account_key == "default":
@@ -747,7 +792,6 @@ class AggregateSign(_PluginBase):
         return bool(value)
 
     def get_state(self) -> bool:
-        logger.info(f"聚合签到状态: {self._enabled}")
         return self._enabled
 
     def get_service(self) -> List[Dict[str, Any]]:
@@ -1068,7 +1112,11 @@ class AggregateSign(_PluginBase):
             "username": self._legacy_account.get("username", self._username) if self._accounts_text.strip() else self._username,
             "password": self._legacy_account.get("password", self._password) if self._accounts_text.strip() else self._password,
             "accounts": self._accounts_text,
-            "base_url": self._base_url,
+            "base_url": (
+                self._legacy_account.get("base_url", self._site_defaults["juying"]["base_url"])
+                if self._accounts_text.strip()
+                else self._base_url
+            ),
             "cron": self._cron,
             "max_retries": self._max_retries,
             "retry_interval_minutes": self._retry_interval_minutes,
@@ -1082,7 +1130,7 @@ class AggregateSign(_PluginBase):
         return json.dumps(cls._default_accounts, ensure_ascii=False, indent=2)
 
     def _is_manual_trigger(self) -> bool:
-        return getattr(self, "_manual_trigger", False)
+        return self._current_trigger_type == "手动触发"
 
     def _is_already_signed_today(self) -> bool:
         history = self.get_data(self._data_key("sign_history")) or []

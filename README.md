@@ -15,7 +15,7 @@
 
 - 聚影账号密码自动登录
 - Cookie 登录态签到
-- 聚影、癫影多站点签到
+- 聚影、癫影、影巢多站点签到
 - 癫影普通签到和运气签到方式配置
 - 多账号按配置顺序串行轮询签到
 - 多账号独立保存 Cookie、登录态、历史和通知
@@ -40,7 +40,7 @@
 | 启用插件 | 开启后注册定时签到任务 |
 | 开启通知 | 签到成功、重复签到、失败和重试时发送站内通知 |
 | 立即运行一次 | 保存配置后立即执行一次签到 |
-| 多账号配置 | JSON 数组。唯一账号配置入口，支持 `site`、`name`、`base_url`、`username`、`password`、`cookie`、`methods` |
+| 多账号配置 | JSON 数组。唯一账号配置入口，支持 `id`、`site`、`name`、`base_url`、`username`、`password`、`cookie`、`methods` |
 | 签到周期 | Cron 表达式，默认每天 08:00 |
 | 最大重试次数 | 签到失败后的重试次数 |
 | 失败重试间隔 | 单个账号签到失败后，等待多少分钟再重试 |
@@ -77,6 +77,7 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
 ```json
 [
   {
+    "id": "juying-1",
     "site": "juying",
     "name": "聚影账号1",
     "base_url": "https://www.jying.top",
@@ -86,6 +87,7 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
     "methods": ["normal"]
   },
   {
+    "id": "dian115-1",
     "site": "dian115",
     "name": "癫影账号1",
     "username": "你的邮箱",
@@ -94,6 +96,7 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
     "methods": ["normal"]
   },
   {
+    "id": "hdhive-1",
     "site": "hdhive",
     "name": "影巢账号1",
     "username": "你的用户名或邮箱",
@@ -108,6 +111,7 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
 
 | 字段 | 说明 |
 | --- | --- |
+| `id` | 推荐填写的稳定账号标识，同一站点内必须唯一；用于隔离历史、连续天数和登录态 |
 | `site` | 站点标志，支持 `juying`、`dian115`、`hdhive` |
 | `name` | 账号显示名，用于历史和通知 |
 | `base_url` | 站点入口。聚影国内入口填 `https://jying.top`，国外入口填 `https://www.jying.top`；聚影不填时默认使用国外入口 |
@@ -118,6 +122,8 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
 多账号执行规则：
 
 - 插件按 JSON 数组顺序串行轮询执行，不并行签到。
+- 已有签到任务运行时，重复的手动或定时触发会被跳过，避免账号登录态互相覆盖。
+- 未填写 `id` 时继续兼容旧配置；同站点同名账号会按配置序号临时隔离，建议补充固定 `id`，避免调整顺序后历史归属变化。
 - 两个账号之间会按“账号轮询间隔”等待，默认 10 秒。
 - 单个账号失败后会按“失败重试间隔”等待后重试，默认 3 分钟。
 - 账号填写 `username` 和 `password` 时，`cookie` 可以留空。自动登录成功后，插件会把获取到的 `cookie` 和 `storage_state` 回写到该账号配置中。

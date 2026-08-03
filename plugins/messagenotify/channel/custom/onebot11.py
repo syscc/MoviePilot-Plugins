@@ -243,7 +243,7 @@ class OneBot11Channel(CustomChannel):
         """
         type_str = type.value if type else None
         json = self.__build_json(user_id=user_id, group_id=group_id, message=message)
-        res = requests.post(url=url, json=json, proxies=proxies)
+        res = requests.post(url=url, json=json, proxies=proxies, timeout=self.REQUEST_TIMEOUT)
         res_json = res.json() or {}
         if res.ok:
             code = res_json.get("retcode")
@@ -271,7 +271,7 @@ class OneBot11Channel(CustomChannel):
             return False
         # 模板变量
         template_variables = self.build_template_variables(title=title, text=text, type=type, ext_info=ext_info)
-        logger.info(f">>> 全部模板变量: {template_variables}")
+        logger.info(f">>> 模板变量字段: {sorted(str(key) for key in template_variables)}")
         # 发送url
         send_url = self.__build_url()
         # 消息模板

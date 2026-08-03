@@ -226,7 +226,7 @@ class PushMeChannel(CustomChannel):
         send_url = server_url
         data = self.__build_data(title=title, text=text, ext_info=ext_info)
         proxies = settings.PROXY if self.get_config_item(config_key="enable_proxy") else None
-        res = requests.post(url=send_url, data=data, proxies=proxies)
+        res = requests.post(url=send_url, data=data, proxies=proxies, timeout=self.REQUEST_TIMEOUT)
         res_text = res.text
         if res_text == 'success':
             logger.info(f"发送消息成功: channel = {self.comp_name}, type = {type_str}")

@@ -253,7 +253,13 @@ class NtfyChannel(CustomChannel):
         headers = self.__build_headers(title=title, type=type, image=ext_info.get("image"))
         data = self.__build_data(title=title, text=text, ext_info=ext_info)
         proxies = settings.PROXY if self.get_config_item(config_key="enable_proxy") else None
-        res = requests.post(url=send_url, headers=headers, data=data, proxies=proxies)
+        res = requests.post(
+            url=send_url,
+            headers=headers,
+            data=data,
+            proxies=proxies,
+            timeout=self.REQUEST_TIMEOUT,
+        )
         res_json = res.json() or {}
         if res.ok or res_json:
             code = res_json.get("code")

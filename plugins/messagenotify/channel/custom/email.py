@@ -274,4 +274,7 @@ class EmailChannel(CustomChannel):
             return False
         finally:
             if smtp:
-                smtp.quit()
+                try:
+                    smtp.quit()
+                except Exception:
+                    logger.warning(f"关闭SMTP连接失败: channel = {self.comp_name}", exc_info=True)

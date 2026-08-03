@@ -204,10 +204,12 @@ class HttpChannel(CustomChannel):
         """
         判断字符串是否是json字符串
         """
+        if not isinstance(s, (str, bytes, bytearray)):
+            return False
         try:
             json.loads(s=s)
             return True
-        except ValueError as e:
+        except (TypeError, ValueError):
             return False
 
     @classmethod
@@ -219,7 +221,8 @@ class HttpChannel(CustomChannel):
             return {}
         # json
         if cls.__is_json(s=s):
-            return json.loads(s=s)
+            value = json.loads(s=s)
+            return value if isinstance(value, dict) else {}
         # 多行键值对
         result = {}
         for line in s.splitlines():
@@ -227,7 +230,9 @@ class HttpChannel(CustomChannel):
                 continue
             if ":" not in line:
                 continue
-            key, value = line.split(":")
+            key, value = line.split(":", 1)
+            key = key.strip()
+            value = value.strip()
             if not key:
                 continue
             result[key] = value
@@ -271,30 +276,31 @@ class HttpChannel(CustomChannel):
             return False
         # 模板变量
         template_variables = self.build_template_variables(title=title, text=text, type=type, ext_info=ext_info)
-        logger.info(f"HTTP请求 >>> 全部模板变量: {template_variables}")
+        logger.info(f"HTTP请求 >>> 模板变量字段: {sorted(str(key) for key in template_variables)}")
         # 请求方法
         method = self.get_config_item(config_key="method")
         logger.info(f"HTTP请求 >>> 请求方法: {method}")
         # 请求URL
         url = self.get_config_item(config_key="url")
         url = self.render_template(text=url, variables=template_variables, url_encode=True)
-        logger.info(f"HTTP请求 >>> 请求URL: {url}")
+        logger.info(f"HTTP请求 >>> 请求URL已生成，长度: {len(url or '')}")
         # 请求头
         headers = self.get_config_item(config_key="headers")
         headers = self.render_template(text=headers, variables=template_variables)
         headers = self.__str_to_dict(s=headers)
-        logger.info(f"HTTP请求 >>> 请求头: {headers}")
+        logger.info(f"HTTP请求 >>> 请求头字段: {sorted(str(key) for key in headers)}")
         # 请求参数
         params = self.get_config_item(config_key="params")
         params = self.render_template(text=params, variables=template_variables)
         params = self.__str_to_dict(s=params)
-        logger.info(f"HTTP请求 >>> 请求参数: {params}")
+        logger.info(f"HTTP请求 >>> 请求参数字段: {sorted(str(key) for key in params)}")
         # 请求体
         body = self.get_config_item(config_key="body")
         body = self.render_template(text=body, variables=template_variables)
-        logger.info(f"HTTP请求 >>> 请求体: {body}")
+        logger.info(f"HTTP请求 >>> 请求体长度: {len(body or '')}")
         is_json = self.__is_json(s=body)
         content_type = self.__get_dict_value_ignorecase(data=headers, key="Content-Type")
+        content_type = str(content_type or "").split(";", 1)[0].strip().lower()
         if is_json and content_type == "application/json":
             body = json.dumps(json.loads(body))
         elif is_json and content_type == "application/x-www-form-urlencoded":
@@ -304,10 +310,18 @@ class HttpChannel(CustomChannel):
         # 代理
         proxies = settings.PROXY if self.get_config_item(config_key="enable_proxy") else None
         # 发起请求
-        res = requests.request(method=method, url=url, headers=headers, params=params, data=body, proxies=proxies)
+        res = requests.request(
+            method=method,
+            url=url,
+            headers=headers,
+            params=params,
+            data=body,
+            proxies=proxies,
+            timeout=self.REQUEST_TIMEOUT,
+        )
         if res:
             if res.ok:
-                logger.info(f"发送消息成功: channel = {self.comp_name}, type = {type_str}, text = {res.text}")
+                logger.info(f"发送消息成功: channel = {self.comp_name}, type = {type_str}, status_code = {res.status_code}")
                 return True
             else:
                 logger.warn(f"发送消息失败: channel = {self.comp_name}, type = {type_str}, status_code = {res.status_code}, reason = {res.reason}")

@@ -165,7 +165,7 @@ class GotifyChannel(CustomChannel):
         send_url = self.__build_url()
         json = self.__build_json(title=title, text=text)
         proxies = settings.PROXY if self.get_config_item(config_key="enable_proxy") else None
-        res = requests.post(url=send_url, json=json, proxies=proxies)
+        res = requests.post(url=send_url, json=json, proxies=proxies, timeout=self.REQUEST_TIMEOUT)
         res_json = res.json() or {}
         if res.ok or res_json:
             code = res_json.get("errorCode")

@@ -169,7 +169,7 @@ class ServerChanChannel(CustomChannel):
             return
         send_url = self.__build_url()
         json = self.__build_json(title=title, text=text, ext_info=ext_info)
-        res = requests.post(url=send_url, json=json)
+        res = requests.post(url=send_url, json=json, timeout=self.REQUEST_TIMEOUT)
         res_json = res.json() or {}
         if res.ok or res_json:
             code = res_json.get("code")

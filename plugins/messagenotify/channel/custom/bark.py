@@ -1,5 +1,5 @@
 import base64
-from typing import Tuple, List, Dict, Any
+from typing import Tuple, List, Dict, Any, Optional
 from enum import Enum
 import requests
 import json as lib_json
@@ -472,7 +472,7 @@ class BarkChannel(CustomChannel):
         # Key
         cipher_key: str = self.get_config_item(config_key="cipher_key")
         if not cipher_key:
-            logger.warn(f"配置检查不通过: channel = {self.comp_name}, 加密密钥（Key）无效: {cipher_key}")
+            logger.warn(f"配置检查不通过: channel = {self.comp_name}, 加密密钥（Key）无效")
             return False
         cipher_key_bytes = cipher_key.encode("utf-8")
         cipher_key_bytes_len = len(cipher_key_bytes)
@@ -495,7 +495,7 @@ class BarkChannel(CustomChannel):
         cipher_iv_bytes_len = len(cipher_iv_bytes)
         if cipher_mode == "CBC" or cipher_mode == "GCM":
             if not cipher_iv:
-                logger.warn(f"配置检查不通过: channel = {self.comp_name}, 加密初始向量（Iv）无效: {cipher_iv}")
+                logger.warn(f"配置检查不通过: channel = {self.comp_name}, 加密初始向量（Iv）无效")
                 return False
             if cipher_mode == "CBC":
                 if cipher_iv_bytes_len != 16:
@@ -631,7 +631,7 @@ class BarkChannel(CustomChannel):
             iv=self.get_config_item(config_key="cipher_iv")
         )
 
-    def __build_req_data(self, title: str, text: str, ext_info: dict = {}) -> dict:
+    def __build_req_data(self, title: str, text: str, ext_info: dict = {}) -> Optional[dict]:
         """
         生成请求数据
         """
@@ -645,9 +645,9 @@ class BarkChannel(CustomChannel):
                     "ciphertext": ciphertext,
                     "iv": iv
                 }
-            except Exception as e:
-                logger.error(f"加密异常，已降级为非加密方式: {str(e)}", exc_info=True)
-                return json
+            except Exception:
+                logger.error("Bark消息加密失败，已取消发送", exc_info=True)
+                return None
 
     def send_message(self, title: str, text: str, type: NotificationType = None, ext_info: dict = {}) -> bool:
         """
@@ -662,8 +662,10 @@ class BarkChannel(CustomChannel):
             return False
         send_url = self.__build_url()
         json = self.__build_req_data(title=title, text=text, ext_info=ext_info)
+        if json is None:
+            return False
         proxies = settings.PROXY if self.get_config_item(config_key="enable_proxy") else None
-        res = requests.post(url=send_url, json=json, proxies=proxies)
+        res = requests.post(url=send_url, json=json, proxies=proxies, timeout=self.REQUEST_TIMEOUT)
         res_json = res.json() or {}
         if res.ok or res_json:
             code = res_json.get("code")

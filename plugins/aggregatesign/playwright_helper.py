@@ -499,7 +499,7 @@ class AggregateSignClient:
             return False, "未配置 Cookie"
         methods = methods or ["normal"]
         results = []
-        success = False
+        all_success = True
         for method in methods:
             mode = "lucky" if str(method).lower() in ("lucky", "luck", "运气签到", "运气") else "normal"
             status, data, _ = self._dian115_api_request(
@@ -513,11 +513,11 @@ class AggregateSignClient:
             code = data.get("code")
             if code == "already_signed":
                 results.append(f"{self._dian115_method_name(mode)}: 今日已签到")
-                success = True
                 continue
             if status >= 400 or code not in ("", "ok", None):
                 msg = data.get("msg") or data.get("message") or f"HTTP {status}"
                 results.append(f"{self._dian115_method_name(mode)}失败: {msg}")
+                all_success = False
                 continue
 
             award = data.get("award")
@@ -531,8 +531,7 @@ class AggregateSignClient:
             if tier:
                 detail += f"，运气结果 {tier}"
             results.append(detail)
-            success = True
-        return success, "；".join(results) if results else "签到完成"
+        return all_success and bool(results), "；".join(results) if results else "签到完成"
 
     @staticmethod
     def _dian115_method_name(method: str) -> str:
@@ -946,6 +945,22 @@ class AggregateSignClient:
     def _is_already_signed_text(text: str) -> bool:
         return any(keyword in text for keyword in ("已签到", "已经签到", "今日已签", "明天再来"))
 
+    @staticmethod
+    def _juying_checkin_result(status: int, data: Dict[str, Any]) -> Tuple[bool, str]:
+        if status in (401, 403):
+            return False, "Cookie 无效或登录已过期"
+
+        payload = data if isinstance(data, dict) else {}
+        message = str(payload.get("message") or "").strip()
+        already_signed = AggregateSignClient._is_already_signed_text(message)
+        success = already_signed or (
+            status < 400
+            and (payload.get("status") == "success" or payload.get("success") is True)
+        )
+        if success:
+            return True, message or ("今日已签到" if already_signed else "签到成功")
+        return False, message or f"聚影签到接口 HTTP {status}"
+
     def checkin(
         self,
         cookie_str: str,
@@ -1002,18 +1017,40 @@ class AggregateSignClient:
                                 return True, page_text or "今日已签到"
                             return False, page_text or "未找到立即签到按钮"
 
-                        button.click(timeout=10000)
+                        checkin_response = None
                         try:
-                            page.wait_for_load_state("networkidle", timeout=15000)
-                        except Exception:
-                            pass
+                            with page.expect_response(
+                                lambda response: (
+                                    response.request.method == "POST"
+                                    and urlparse(response.url).path.rstrip("/") == "/api/app/checkin/do"
+                                ),
+                                timeout=15000,
+                            ) as response_info:
+                                button.click(timeout=10000)
+                            checkin_response = response_info.value
+                        except PlaywrightTimeoutError:
+                            checkin_response = None
+
+                        if checkin_response is not None:
+                            try:
+                                response_data = checkin_response.json()
+                            except Exception:
+                                response_data = {}
+                            if response_data or checkin_response.status >= 400:
+                                return AggregateSignClient._juying_checkin_result(
+                                    checkin_response.status,
+                                    response_data,
+                                )
+
                         try:
                             page.wait_for_timeout(2000)
                         except Exception:
                             pass
 
                         result_text = self._extract_page_message(page)
-                        success_keywords = ("签到成功", "成功", "已签到", "已经签到", "今日已签", "获得", "积分")
+                        success_keywords = (
+                            "签到成功", "成功", "已签到", "已经签到", "今日已签", "已完成", "获得", "积分"
+                        )
                         if any(keyword in result_text for keyword in success_keywords):
                             return True, result_text or "签到请求已完成"
                         return False, result_text or "签到后未识别到成功提示"

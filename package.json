@@ -3,14 +3,16 @@
     "name": "聚合签到",
     "description": "聚合多个站点的每日签到，支持多账号、多站点、自动登录、Cookie 登录态、定时任务和失败重试。",
     "labels": "聚合,签到,站点",
-    "version": "2.2",
+    "version": "2.3",
     "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png",
     "author": "syscc",
     "homepage": "https://github.com/syscc/MoviePilot-Plugins",
     "repository": "https://github.com/syscc/MoviePilot-Plugins",
     "level": 2,
     "v2": true,
+    "release": true,
     "history": {
+      "2.3": "修复聚影签到响应误判、重复任务并发、账号数据冲突、顶层站点地址污染和癫影多方式部分失败误报成功的问题。",
       "2.2": "修复聚影 Cookie 失效未触发自动登录更新的问题，并支持在多账号 JSON 中选择国内或国外入口。",
       "2.1": "聚影默认站点迁移至 https://www.jying.top，并自动兼容旧域名配置。",
       "2.0": "修复影巢 Server Action 安全会话轮换导致 HTTP 409 的问题，签到后自动回写最新 Cookie 和 IndexedDB 状态。",
@@ -30,7 +32,7 @@
     "name": "消息通知",
     "description": "消息通知，一个插件就够了。",
     "labels": "消息通知",
-    "version": "1.0",
+    "version": "1.0.1",
     "release": true,
     "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/messagenotify.png",
     "author": "syscc",
@@ -39,6 +41,7 @@
     "level": 1,
     "v2": true,
     "history": {
+      "1.0.1": "为所有 HTTP 通知增加超时，脱敏请求日志，禁止 Bark 加密失败后明文降级，并修复 HTTP 配置解析和邮件连接清理。",
       "1.0": "初始引入消息通知插件，放宽 cryptography 依赖版本约束以兼容主程序环境。"
     }
   }
