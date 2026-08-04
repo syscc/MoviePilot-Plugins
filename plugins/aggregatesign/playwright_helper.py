@@ -8,6 +8,7 @@ import json
 import re
 from socket import AF_INET, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET, socket
 from sys import platform
+import time
 from typing import Any, Dict, Iterator, Optional, Tuple
 from urllib.error import HTTPError
 from urllib.parse import unquote, urlparse
@@ -706,6 +707,29 @@ class AggregateSignClient:
     def get_updated_login_state(self) -> Tuple[str, str]:
         return self._updated_cookie_str, self._updated_storage_state
 
+    @staticmethod
+    def _hdhive_token_expired(token: str) -> bool:
+        try:
+            payload = token.split(".", 2)[1]
+            payload += "=" * (-len(payload) % 4)
+            decoded = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")).decode("utf-8"))
+            expires_at = float(decoded.get("exp") or 0)
+            return bool(expires_at and expires_at <= time.time())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _dismiss_hdhive_announcement(page: Any) -> None:
+        try:
+            button = page.locator("[role='dialog'] button").filter(
+                has_text=re.compile(r"^\s*我知道了(?:\s*\(\d+s\))?\s*$")
+            ).first
+            if button.count() > 0 and button.is_visible():
+                button.click(timeout=8000)
+                page.wait_for_timeout(300)
+        except Exception:
+            pass
+
     def _hdhive_checkin(
         self,
         cookie_str: str,
@@ -713,8 +737,11 @@ class AggregateSignClient:
         methods: Optional[list[str]] = None,
     ) -> Tuple[bool, str]:
         cookies = self._parse_cookie_str(cookie_str)
-        if not cookies.get("token"):
+        token = cookies.get("token")
+        if not token:
             return False, "Cookie 缺少 token，登录已失效或 Cookie 不完整"
+        if self._hdhive_token_expired(token):
+            return False, "Cookie 无效或登录已过期"
         methods = methods or ["normal"]
         gamble = any(str(method).lower() == "gamble" for method in methods)
         label = "赌狗签到" if gamble else "每日签到"
@@ -749,12 +776,16 @@ class AggregateSignClient:
                                 return False, f"登录安全会话已失效: {message}"
                             return success, message
 
+                        self._dismiss_hdhive_announcement(page)
                         user_menu = page.locator("button[aria-label='用户菜单']").first
                         try:
-                            if user_menu.count() > 0 and user_menu.is_visible():
-                                user_menu.click(timeout=10000)
-                        except Exception:
-                            pass
+                            if user_menu.count() == 0:
+                                return False, "Cookie 无效或登录已过期，未检测到用户菜单"
+                            user_menu.click(timeout=10000)
+                            page.wait_for_timeout(300)
+                        except Exception as err:
+                            error = self._compact_page_text(str(err), limit=200)
+                            return False, f"打开影巢用户菜单失败: {error}"
 
                         labels = ("赌狗签到", "赌狗") if gamble else ("每日签到", "立即签到", "签到")
                         button = None
