@@ -1096,8 +1096,18 @@ class AggregateSignClient:
         if not username or not password:
             return False, "", "", "未配置用户名或密码"
 
+        api_login_message = ""
         if self.site_key == "dian115":
-            return self._dian115_login(username=username, password=password)
+            try:
+                success, cookie_str, storage_state, message = self._dian115_login(
+                    username=username,
+                    password=password,
+                )
+                if success:
+                    return success, cookie_str, storage_state, message
+                api_login_message = message
+            except Exception:
+                api_login_message = "登录接口请求异常"
 
         if self.site_key != "hdhive":
             try:
@@ -1106,6 +1116,11 @@ class AggregateSignClient:
                     return True, cookie_str, storage_state, message
             except Exception as err:
                 message = f"登录接口异常: {err}"
+
+        def browser_failure_message(message: str) -> str:
+            if api_login_message:
+                return f"{message}；dian115 API 登录失败：{api_login_message}"
+            return message
 
         try:
             with AggregateSignClient._browser_runtime() as playwright:
@@ -1118,7 +1133,7 @@ class AggregateSignClient:
                         page.wait_for_selector("input", timeout=15000)
 
                         if not self._fill_login_form(page, username, password):
-                            return False, "", "", "未找到可用的登录输入框"
+                            return False, "", "", browser_failure_message("未找到可用的登录输入框")
 
                         try:
                             page.wait_for_url(lambda url: "/login" not in url, timeout=15000)
@@ -1132,19 +1147,23 @@ class AggregateSignClient:
                         if "/login" in page.url:
                             page_text = self._extract_page_message(page)
                             if any(keyword in page_text for keyword in ("错误", "失败", "密码", "验证码")):
-                                return False, "", "", page_text
-                            return False, "", "", "登录后仍停留在登录页，可能账号密码错误、站点登录页面变化或站点响应过慢"
+                                return False, "", "", browser_failure_message(page_text)
+                            return False, "", "", browser_failure_message(
+                                "登录后仍停留在登录页，可能账号密码错误、站点登录页面变化或站点响应过慢"
+                            )
 
                         self._goto_page(page, f"{self.base_url}{self.checkin_path}")
                         self._wait_network_idle(page, timeout=15000)
                         if "/login" in page.url:
                             page_text = self._extract_page_message(page)
-                            return False, "", "", page_text or "账号密码登录未保持有效登录态"
+                            return False, "", "", browser_failure_message(
+                                page_text or "账号密码登录未保持有效登录态"
+                            )
 
                         raw_cookies = context.cookies()
                         cookie_str = self._cookie_list_to_str(raw_cookies)
                         if not cookie_str:
-                            return False, "", "", "登录后未获取到 Cookie"
+                            return False, "", "", browser_failure_message("登录后未获取到 Cookie")
                         if self.site_key == "hdhive" and "token" not in self._parse_cookie_str(cookie_str):
                             return False, "", "", "影巢登录后未获取到 token Cookie"
                         try:
@@ -1162,9 +1181,9 @@ class AggregateSignClient:
                     finally:
                         browser.close()
         except AggregateSignBrowserError as err:
-            return False, "", "", str(err)
+            return False, "", "", browser_failure_message(str(err))
         except Exception as err:
-            return False, "", "", f"登录异常: {err}"
+            return False, "", "", browser_failure_message(f"登录异常: {err}")
 
     @staticmethod
     def _fill_login_form(page: Any, username: str, password: str) -> bool:
