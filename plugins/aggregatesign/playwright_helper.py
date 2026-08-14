@@ -540,6 +540,108 @@ class AggregateSignClient:
             detail += f"，运气结果 {tier}"
         return True, detail
 
+    @staticmethod
+    def _dian115_profile_from_response(data: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(data, dict):
+            return {}
+        user = data.get("user")
+        if isinstance(user, dict):
+            profile = dict(data)
+            profile.update(user)
+            return profile
+        return data
+
+    @staticmethod
+    def _dian115_today_signin_points(ledger: Any) -> Any:
+        if not isinstance(ledger, dict):
+            return None
+        today = time.strftime("%Y-%m-%d")
+        for item in ledger.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("created_at") or "")[:10] != today:
+                continue
+            description = " ".join(
+                str(item.get(key) or "")
+                for key in ("reason", "related_type", "note")
+            ).lower()
+            if "签到" not in description and "signin" not in description and "checkin" not in description:
+                continue
+            if item.get("delta") is not None:
+                return item.get("delta")
+        return None
+
+    def _dian115_browser_profile(
+        self,
+        cookie_str: str,
+        storage_state: str = "",
+    ) -> Dict[str, Any]:
+        try:
+            with AggregateSignClient._browser_runtime() as playwright:
+                with AggregateSignClient._socks5_slippers_if_needed() as slip:
+                    proxy = slip if slip is not None else AggregateSignClient._playwright_proxy_settings()
+                    browser, context = self._make_context(
+                        playwright,
+                        proxy,
+                        storage_state=storage_state,
+                    )
+                    try:
+                        if not self._context_has_site_cookies(context):
+                            self._add_cookies(context, cookie_str)
+                        page = context.new_page()
+                        captured: Dict[str, Any] = {}
+
+                        def capture_response(response: Any) -> None:
+                            try:
+                                if response.request.method != "GET":
+                                    return
+                                path = urlparse(response.url).path.rstrip("/")
+                                key = {
+                                    "/api/portal/me": "profile",
+                                    "/api/portal/me/points/ledger": "ledger",
+                                }.get(path)
+                                if not key:
+                                    return
+                                current = captured.get(key)
+                                if current is None or getattr(response, "status", 500) < 400:
+                                    captured[key] = response
+                            except Exception:
+                                return
+
+                        page.on("response", capture_response)
+                        self._goto_page(page, f"{self.base_url}/me")
+                        self._wait_network_idle(page)
+                        if "/login" in page.url:
+                            return {}
+
+                        profile_response = captured.get("profile")
+                        if profile_response is None or getattr(profile_response, "status", 500) >= 400:
+                            return {}
+                        try:
+                            profile_data = profile_response.json()
+                        except Exception:
+                            profile_data = {}
+                        profile = self._dian115_profile_from_response(profile_data)
+                        if not profile:
+                            return {}
+
+                        self._goto_page(page, f"{self.base_url}/me/points")
+                        self._wait_network_idle(page)
+                        ledger_response = captured.get("ledger")
+                        if ledger_response is not None and getattr(ledger_response, "status", 500) < 400:
+                            try:
+                                ledger_data = ledger_response.json()
+                            except Exception:
+                                ledger_data = {}
+                            today_points = self._dian115_today_signin_points(ledger_data)
+                            if today_points is not None:
+                                profile["today_signin_points"] = today_points
+                        return profile
+                    finally:
+                        browser.close()
+        except Exception:
+            return {}
+
     def _dian115_browser_checkin(
         self,
         cookie_str: str,
@@ -1019,13 +1121,20 @@ class AggregateSignClient:
                 cookie_str=cookie_str,
             )
             if status >= 400 or not isinstance(data, dict):
-                return {}
-            user = data.get("user")
-            if isinstance(user, dict):
-                profile = dict(data)
-                profile.update(user)
-                return profile
-            return data
+                return self._dian115_browser_profile(
+                    cookie_str=cookie_str,
+                    storage_state=storage_state,
+                )
+            profile = self._dian115_profile_from_response(data)
+            if profile.get("points") is None or profile.get("today_signin_points") is None:
+                browser_profile = self._dian115_browser_profile(
+                    cookie_str=cookie_str,
+                    storage_state=storage_state,
+                )
+                for key, value in browser_profile.items():
+                    if value not in (None, "", "—"):
+                        profile[key] = value
+            return profile
         if self.site_key == "hdhive":
             return self._hdhive_profile(cookie_str)
 

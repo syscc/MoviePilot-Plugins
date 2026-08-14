@@ -1,6 +1,6 @@
 """
 聚合签到插件
-版本: 2.7
+版本: 2.8
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
@@ -38,7 +38,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "2.7"
+    plugin_version = "2.8"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -682,6 +682,7 @@ class AggregateSign(_PluginBase):
             "site_level": site_info.get("site_level", "—"),
             "total_points": site_info.get("total_points", "—"),
             "site_total_days": site_info.get("site_total_days", "—"),
+            "site_consecutive_days": site_info.get("site_consecutive_days", "—"),
             "days": consecutive_days,
         }
 
@@ -726,6 +727,7 @@ class AggregateSign(_PluginBase):
         site_username = sign_dict.get("site_username", "—")
         total_points = sign_dict.get("total_points", "—")
         site_total_days = sign_dict.get("site_total_days", "—")
+        site_consecutive_days = sign_dict.get("site_consecutive_days", "—")
         days = sign_dict.get("days", self.get_data(self._data_key("consecutive_days")) or "—")
         sign_time = sign_dict.get("date", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         trigger_type = self._current_trigger_type or "未知"
@@ -752,6 +754,7 @@ class AggregateSign(_PluginBase):
             f"奖励积分：{points}\n"
             f"总积分：{total_points}\n"
             f"累计签到：{site_total_days}\n"
+            f"站点连续签到：{site_consecutive_days}\n"
             f"连续天数：{days}\n"
             f"━━━━━━━━━━"
         )
@@ -1167,6 +1170,7 @@ class AggregateSign(_PluginBase):
             ),
             "points": self._first_existing_value(
                 latest.get("points"),
+                site_info.get("today_signin_points"),
                 *(record.get("points") for record in today_success[1:]),
                 "—",
             ),
@@ -1191,6 +1195,11 @@ class AggregateSign(_PluginBase):
                 *(record.get("site_total_days") for record in today_success),
                 "—",
             ),
+            "site_consecutive_days": self._first_existing_value(
+                site_info.get("site_consecutive_days"),
+                *(record.get("site_consecutive_days") for record in today_success),
+                "—",
+            ),
             "days": latest.get("days", self.get_data(self._data_key("consecutive_days")) or "—"),
         }
 
@@ -1200,6 +1209,8 @@ class AggregateSign(_PluginBase):
             "site_level": self.get_data(self._data_key("site_level")) or "—",
             "total_points": self.get_data(self._data_key("total_points")) or "—",
             "site_total_days": self.get_data(self._data_key("site_total_days")) or "—",
+            "site_consecutive_days": self.get_data(self._data_key("site_consecutive_days")) or "—",
+            "today_signin_points": "—",
         }
         if AggregateSignClient is None or not self._cookie:
             return info
@@ -1235,6 +1246,21 @@ class AggregateSign(_PluginBase):
             if total is not None:
                 info["total_points"] = total
                 self.save_data(self._data_key("total_points"), total)
+
+            today_points = self._first_profile_value(
+                profile,
+                ("today_signin_points", "signin_points_today", "today_points"),
+            )
+            if today_points is not None:
+                info["today_signin_points"] = today_points
+
+            site_consecutive_days = self._first_profile_value(
+                profile,
+                ("consecutive_signin", "consecutive_signin_days", "current_streak"),
+            )
+            if site_consecutive_days is not None:
+                info["site_consecutive_days"] = site_consecutive_days
+                self.save_data(self._data_key("site_consecutive_days"), site_consecutive_days)
         except Exception as e:
             logger.warning(f"获取{self._current_site_name}用户信息失败: {e}")
 
