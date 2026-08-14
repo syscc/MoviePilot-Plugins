@@ -495,43 +495,122 @@ class AggregateSignClient:
             return False, "", "", "登录接口未返回 Cookie"
         return True, cookie_str, "", "登录成功"
 
+    @staticmethod
+    def _dian115_auth_failed(status: int, data: Dict[str, Any]) -> bool:
+        return status == 401 or data.get("code") in ("no_token", "invalid_token", "token_revoked")
+
+    def _dian115_checkin_result(self, status: int, data: Dict[str, Any], mode: str) -> Tuple[bool, str]:
+        code = data.get("code")
+        method_name = self._dian115_method_name(mode)
+        if code == "already_signed":
+            return True, f"{method_name}: 今日已签到"
+        if status >= 400 or code not in ("", "ok", None):
+            msg = data.get("msg") or data.get("message") or f"HTTP {status}"
+            return False, f"{method_name}失败: {msg}"
+
+        award = data.get("award")
+        balance = data.get("new_balance")
+        tier = data.get("lucky_tier")
+        detail = f"{method_name}成功"
+        if award is not None:
+            detail += f"，奖励积分 {award}"
+        if balance is not None:
+            detail += f"，当前积分 {balance}"
+        if tier:
+            detail += f"，运气结果 {tier}"
+        return True, detail
+
+    def _dian115_browser_checkin(self, cookie_str: str, modes: list[str]) -> Tuple[bool, str]:
+        results = []
+        all_success = True
+        try:
+            with AggregateSignClient._browser_runtime() as playwright:
+                with AggregateSignClient._socks5_slippers_if_needed() as slip:
+                    proxy = slip if slip is not None else AggregateSignClient._playwright_proxy_settings()
+                    browser, context = self._make_context(playwright, proxy)
+                    try:
+                        self._add_cookies(context, cookie_str)
+                        page = context.new_page()
+                        self._goto_page(page, f"{self.base_url}{self.checkin_path}")
+                        self._wait_network_idle(page)
+
+                        if "/login" in page.url:
+                            return False, "Cookie 无效或登录已过期，站点跳转到登录页"
+
+                        for mode in modes:
+                            method_name = self._dian115_method_name(mode)
+                            button = page.locator(f"button:has-text('{method_name}')").first
+                            try:
+                                button.wait_for(state="visible", timeout=15000)
+                            except PlaywrightTimeoutError:
+                                page_text = self._extract_page_message(page)
+                                return False, page_text or f"未找到{method_name}按钮"
+
+                            try:
+                                with page.expect_response(
+                                    lambda response: (
+                                        response.request.method == "POST"
+                                        and urlparse(response.url).path.rstrip("/") == "/api/portal/signin"
+                                    ),
+                                    timeout=15000,
+                                ) as response_info:
+                                    button.click(timeout=10000)
+                                checkin_response = response_info.value
+                            except PlaywrightTimeoutError:
+                                page_text = self._extract_page_message(page)
+                                return False, page_text or f"{method_name}未收到签到响应"
+
+                            try:
+                                response_data = checkin_response.json()
+                            except Exception:
+                                response_data = {}
+                            if not isinstance(response_data, dict):
+                                response_data = {}
+                            if self._dian115_auth_failed(checkin_response.status, response_data):
+                                return False, "Cookie 无效或登录已过期"
+
+                            success, detail = self._dian115_checkin_result(
+                                checkin_response.status,
+                                response_data,
+                                mode,
+                            )
+                            results.append(detail)
+                            all_success = all_success and success
+
+                        return all_success and bool(results), "；".join(results) if results else "签到完成"
+                    finally:
+                        browser.close()
+        except AggregateSignBrowserError as err:
+            return False, str(err)
+        except Exception as err:
+            return False, f"签到异常: {err}"
+
     def _dian115_checkin(self, cookie_str: str, methods: Optional[list[str]] = None) -> Tuple[bool, str]:
         if not cookie_str:
             return False, "未配置 Cookie"
-        methods = methods or ["normal"]
+        modes = [
+            "lucky" if str(method).lower() in ("lucky", "luck", "运气签到", "运气") else "normal"
+            for method in (methods or ["normal"])
+        ]
         results = []
         all_success = True
-        for method in methods:
-            mode = "lucky" if str(method).lower() in ("lucky", "luck", "运气签到", "运气") else "normal"
+        for mode in modes:
             status, data, _ = self._dian115_api_request(
                 path="/signin",
                 method="POST",
                 cookie_str=cookie_str,
                 payload={"mode": mode},
             )
-            if status == 401 or data.get("code") in ("no_token", "invalid_token", "token_revoked"):
+            if not isinstance(data, dict):
+                data = {}
+            if self._dian115_auth_failed(status, data):
                 return False, "Cookie 无效或登录已过期"
-            code = data.get("code")
-            if code == "already_signed":
-                results.append(f"{self._dian115_method_name(mode)}: 今日已签到")
-                continue
-            if status >= 400 or code not in ("", "ok", None):
-                msg = data.get("msg") or data.get("message") or f"HTTP {status}"
-                results.append(f"{self._dian115_method_name(mode)}失败: {msg}")
-                all_success = False
-                continue
+            if status == 403:
+                return self._dian115_browser_checkin(cookie_str=cookie_str, modes=modes)
 
-            award = data.get("award")
-            balance = data.get("new_balance")
-            tier = data.get("lucky_tier")
-            detail = f"{self._dian115_method_name(mode)}成功"
-            if award is not None:
-                detail += f"，奖励积分 {award}"
-            if balance is not None:
-                detail += f"，当前积分 {balance}"
-            if tier:
-                detail += f"，运气结果 {tier}"
+            success, detail = self._dian115_checkin_result(status, data, mode)
             results.append(detail)
+            all_success = all_success and success
         return all_success and bool(results), "；".join(results) if results else "签到完成"
 
     @staticmethod
@@ -1109,7 +1188,7 @@ class AggregateSignClient:
             except Exception:
                 api_login_message = "登录接口请求异常"
 
-        if self.site_key != "hdhive":
+        if self.site_key not in ("dian115", "hdhive"):
             try:
                 success, cookie_str, storage_state, message = self._login_by_api_cookie(username, password)
                 if success:
