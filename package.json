@@ -3,7 +3,7 @@
     "name": "聚合签到",
     "description": "聚合多个站点的每日签到，支持多账号、多站点、自动登录、Cookie 登录态、定时任务和失败重试。",
     "labels": "聚合,签到,站点",
-    "version": "2.6",
+    "version": "2.7",
     "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png",
     "author": "syscc",
     "homepage": "https://github.com/syscc/MoviePilot-Plugins",
@@ -12,6 +12,7 @@
     "v2": true,
     "release": true,
     "history": {
+      "2.7": "修复 dian115 浏览器签到注入 __Host- Cookie 报 Invalid cookie fields，并复用完整浏览器登录态。",
       "2.6": "修复 dian115 签到接口 HTTP 403，改用浏览器页面签到请求签名；并修正登录回退路径。",
       "2.5": "dian115 API 登录失败时回退至已有 Playwright 浏览器登录流程",
       "2.4": "修复影巢登录态过期未触发自动登录，以及首页公告弹窗阻挡签到菜单的问题。",

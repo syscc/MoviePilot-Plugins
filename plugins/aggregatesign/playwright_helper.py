@@ -256,19 +256,39 @@ class AggregateSignClient:
         if not cookies:
             raise AggregateSignBrowserError("未配置有效 Cookie")
 
-        domain = urlparse(self.base_url).hostname
-        if not domain:
+        base_url = self.base_url
+        if not urlparse(base_url).hostname:
             raise AggregateSignBrowserError("站点地址无效")
 
+        # 使用 url 创建 host-only Cookie，兼容 __Host- Cookie（不能显式设置 domain）。
         context.add_cookies([
             {
                 "name": name,
                 "value": value,
-                "domain": domain,
-                "path": "/",
+                "url": f"{base_url}/",
+                "secure": base_url.startswith("https://"),
             }
             for name, value in cookies.items()
         ])
+
+    def _context_has_site_cookies(self, context: Any) -> bool:
+        try:
+            cookies = context.cookies(self.base_url)
+        except TypeError:
+            cookies = context.cookies()
+        except Exception:
+            return False
+        if not isinstance(cookies, list):
+            return False
+        hostname = urlparse(self.base_url).hostname or ""
+        for cookie in cookies:
+            if not isinstance(cookie, dict) or not cookie.get("name") or cookie.get("value") is None:
+                continue
+            domain = str(cookie.get("domain") or "").lstrip(".")
+            url = str(cookie.get("url") or "")
+            if domain == hostname or url.startswith(f"{self.base_url}/"):
+                return True
+        return False
 
     def _restore_storage_state(self, context: Any, storage_state: str) -> None:
         if not storage_state:
@@ -520,16 +540,26 @@ class AggregateSignClient:
             detail += f"，运气结果 {tier}"
         return True, detail
 
-    def _dian115_browser_checkin(self, cookie_str: str, modes: list[str]) -> Tuple[bool, str]:
+    def _dian115_browser_checkin(
+        self,
+        cookie_str: str,
+        modes: list[str],
+        storage_state: str = "",
+    ) -> Tuple[bool, str]:
         results = []
         all_success = True
         try:
             with AggregateSignClient._browser_runtime() as playwright:
                 with AggregateSignClient._socks5_slippers_if_needed() as slip:
                     proxy = slip if slip is not None else AggregateSignClient._playwright_proxy_settings()
-                    browser, context = self._make_context(playwright, proxy)
+                    browser, context = self._make_context(
+                        playwright,
+                        proxy,
+                        storage_state=storage_state,
+                    )
                     try:
-                        self._add_cookies(context, cookie_str)
+                        if not self._context_has_site_cookies(context):
+                            self._add_cookies(context, cookie_str)
                         page = context.new_page()
                         self._goto_page(page, f"{self.base_url}{self.checkin_path}")
                         self._wait_network_idle(page)
@@ -585,7 +615,12 @@ class AggregateSignClient:
         except Exception as err:
             return False, f"签到异常: {err}"
 
-    def _dian115_checkin(self, cookie_str: str, methods: Optional[list[str]] = None) -> Tuple[bool, str]:
+    def _dian115_checkin(
+        self,
+        cookie_str: str,
+        storage_state: str = "",
+        methods: Optional[list[str]] = None,
+    ) -> Tuple[bool, str]:
         if not cookie_str:
             return False, "未配置 Cookie"
         modes = [
@@ -606,7 +641,11 @@ class AggregateSignClient:
             if self._dian115_auth_failed(status, data):
                 return False, "Cookie 无效或登录已过期"
             if status == 403:
-                return self._dian115_browser_checkin(cookie_str=cookie_str, modes=modes)
+                return self._dian115_browser_checkin(
+                    cookie_str=cookie_str,
+                    storage_state=storage_state,
+                    modes=modes,
+                )
 
             success, detail = self._dian115_checkin_result(status, data, mode)
             results.append(detail)
@@ -1078,7 +1117,11 @@ class AggregateSignClient:
         methods: Optional[list[str]] = None,
     ) -> Tuple[bool, str]:
         if self.site_key == "dian115":
-            return self._dian115_checkin(cookie_str=cookie_str, methods=methods)
+            return self._dian115_checkin(
+                cookie_str=cookie_str,
+                storage_state=storage_state,
+                methods=methods,
+            )
         if self.site_key == "hdhive":
             return self._hdhive_checkin(
                 cookie_str=cookie_str,
