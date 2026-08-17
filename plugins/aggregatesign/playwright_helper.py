@@ -1204,6 +1204,23 @@ class AggregateSignClient:
         return any(keyword in text for keyword in ("已签到", "已经签到", "今日已签", "明天再来"))
 
     @staticmethod
+    def _dismiss_juying_announcements(page: Any) -> None:
+        for _ in range(10):
+            try:
+                announcement = page.locator(".announcement-dialog:visible").last
+                if announcement.count() == 0:
+                    return
+                close_button = announcement.locator("button[aria-label*='关闭']").first
+                if close_button.count() == 0:
+                    close_button = announcement.locator("button:has-text('关闭')").first
+                if close_button.count() == 0:
+                    return
+                close_button.click(timeout=5000)
+                page.wait_for_timeout(300)
+            except Exception:
+                return
+
+    @staticmethod
     def _juying_checkin_result(status: int, data: Dict[str, Any]) -> Tuple[bool, str]:
         if status in (401, 403):
             return False, "Cookie 无效或登录已过期"
@@ -1279,6 +1296,7 @@ class AggregateSignClient:
                                 return True, page_text or "今日已签到"
                             return False, page_text or "未找到立即签到按钮"
 
+                        self._dismiss_juying_announcements(page)
                         checkin_response = None
                         try:
                             with page.expect_response(
