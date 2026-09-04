@@ -69,59 +69,6 @@ class AggregateSignClient:
         self._updated_storage_state = ""
 
     @staticmethod
-    def _migrate_hdhive_storage_state(storage_state: str, target_origin: str) -> str:
-        """将旧影巢域名的浏览器状态迁移到新入口。"""
-        if not storage_state or not target_origin:
-            return storage_state
-        try:
-            state = json.loads(storage_state)
-        except Exception:
-            return storage_state
-        if not isinstance(state, dict):
-            return storage_state
-
-        target = urlparse(target_origin)
-        target_host = (target.hostname or "").lower()
-        if not target_host:
-            return storage_state
-        legacy_hosts = {"hdhive.com", "www.hdhive.com"}
-        changed = False
-
-        for cookie in state.get("cookies") or []:
-            if not isinstance(cookie, dict):
-                continue
-            raw_domain = str(cookie.get("domain") or "")
-            domain_host = raw_domain.lstrip(".").lower()
-            if domain_host in legacy_hosts:
-                cookie["domain"] = f".{target_host}" if raw_domain.startswith(".") else target_host
-                changed = True
-            raw_url = str(cookie.get("url") or "")
-            parsed_url = urlparse(raw_url)
-            if parsed_url.hostname and parsed_url.hostname.lower() in legacy_hosts:
-                cookie["url"] = urlunparse((
-                    target.scheme or parsed_url.scheme,
-                    target.netloc or parsed_url.netloc,
-                    parsed_url.path or "/",
-                    parsed_url.params,
-                    parsed_url.query,
-                    parsed_url.fragment,
-                ))
-                changed = True
-
-        for origin in state.get("origins") or []:
-            if not isinstance(origin, dict):
-                continue
-            raw_origin = str(origin.get("origin") or "")
-            parsed_origin = urlparse(raw_origin)
-            if parsed_origin.hostname and parsed_origin.hostname.lower() in legacy_hosts:
-                origin["origin"] = target_origin.rstrip("/")
-                changed = True
-
-        if not changed:
-            return storage_state
-        return json.dumps(state, ensure_ascii=False)
-
-    @staticmethod
     def _parse_cookie_str(cookie_str: str) -> Dict[str, str]:
         cookies: Dict[str, str] = {}
         for item in (cookie_str or "").split(";"):
@@ -226,11 +173,6 @@ class AggregateSignClient:
         proxy: Optional[Dict[str, str]] = None,
         storage_state: str = "",
     ) -> Tuple[Any, Any]:
-        if self.site_key == "hdhive":
-            storage_state = self._migrate_hdhive_storage_state(
-                storage_state,
-                self.base_url,
-            )
         state: Optional[Dict[str, Any]] = None
         if storage_state:
             try:
@@ -252,11 +194,19 @@ class AggregateSignClient:
                 kwargs["proxy"] = proxy
             if state:
                 kwargs["storage_state"] = state
+            state_loaded_by_launcher = bool(state)
             try:
                 context = cloak_launch_context(**kwargs)
             except TypeError:
+                state_loaded_by_launcher = False
                 kwargs.pop("storage_state", None)
                 context = cloak_launch_context(**kwargs)
+            if state and self.site_key == "hdhive":
+                self._apply_hdhive_storage_state(
+                    context,
+                    state,
+                    launcher_loaded=state_loaded_by_launcher,
+                )
             return context, context
 
         browser = playwright.chromium.launch(
@@ -270,11 +220,13 @@ class AggregateSignClient:
             "timezone_id": "Asia/Shanghai",
             "viewport": {"width": 1280, "height": 720},
         }
-        if state:
+        if state and self.site_key != "hdhive":
             context_kwargs["storage_state"] = state
         context = browser.new_context(
             **context_kwargs,
         )
+        if state and self.site_key == "hdhive":
+            self._apply_hdhive_storage_state(context, state)
         return browser, context
 
     def _goto_page(self, page: Any, url: str, wait_until: str = "domcontentloaded") -> Any:
@@ -391,6 +343,42 @@ class AggregateSignClient:
                         )
         finally:
             page.close()
+
+    def _apply_hdhive_storage_state(
+        self,
+        context: Any,
+        state: Dict[str, Any],
+        launcher_loaded: bool = False,
+    ) -> None:
+        """恢复影巢完整登录态，避免丢失 IndexedDB 安全绑定。"""
+        if not isinstance(state, dict):
+            return
+
+        has_indexed_db = any(
+            isinstance(origin, dict) and origin.get("indexedDB")
+            for origin in (state.get("origins") or [])
+        )
+        setter = getattr(context, "set_storage_state", None)
+        if callable(setter):
+            try:
+                setter(state)
+                return
+            except Exception as err:
+                if has_indexed_db:
+                    raise AggregateSignBrowserError(
+                        "影巢完整登录态恢复失败，当前浏览器无法加载 IndexedDB 安全绑定"
+                    ) from err
+
+        if launcher_loaded:
+            return
+        if has_indexed_db:
+            raise AggregateSignBrowserError(
+                "影巢登录态包含 IndexedDB 安全绑定，但当前浏览器不支持完整恢复"
+            )
+        self._restore_storage_state(
+            context,
+            json.dumps(state, ensure_ascii=False),
+        )
 
     @staticmethod
     def _cookie_list_to_str(cookies: list[dict[str, Any]]) -> str:
@@ -899,19 +887,35 @@ class AggregateSignClient:
     def _hdhive_action_hash(page: Any, attempts: int = 3) -> str:
         script = """
             async () => {
-              const pattern = /createServerReference\\)\\(\\s*[\"']([0-9a-f]{40,})[\"'][\\s\\S]{0,400}?[\"']checkIn[\"']/;
-              const urls = Array.from(new Set([
-                ...Array.from(document.scripts).map(script => script.src),
-                ...performance.getEntriesByType('resource').map(entry => entry.name),
-              ])).filter(url => {
-                try {
-                  const pathname = new URL(url, location.href).pathname;
-                  return pathname.includes('/_next/static/chunks/') && pathname.endsWith('.js');
-                } catch (_) {
-                  return false;
+              const patterns = [
+                /createServerReference\\)\\(\\s*[\"']([0-9a-f]{40,})[\"'][\\s\\S]{0,10000}?[\"']checkIn[\"']/,
+                /createServerReference\\)\\(\\s*[\"']([0-9a-f]{40,})[\"'][^)]{0,10000}checkIn/,
+              ];
+              const isChunk = url => {
+                const value = String(url || '').split('?')[0];
+                return value.includes('/_next/static/chunks/') && value.endsWith('.js');
+              };
+              const scriptUrls = Array.from(document.scripts)
+                .map(script => script.src)
+                .filter(isChunk);
+              const resourceUrls = performance.getEntriesByType('resource')
+                .map(entry => entry.name)
+                .filter(isChunk);
+              const urls = Array.from(new Set([...scriptUrls, ...resourceUrls]));
+              const findHash = source => {
+                for (const pattern of patterns) {
+                  const match = String(source || '').match(pattern);
+                  if (match) return match[1];
                 }
-              });
-              const sources = await Promise.all(urls.map(async url => {
+                return '';
+              };
+              for (const script of document.scripts) {
+                if (!script.src) {
+                  const hash = findHash(script.textContent || '');
+                  if (hash) return hash;
+                }
+              }
+              const fetchSource = async url => {
                 try {
                   const response = await fetch(url, {
                     cache: 'no-store',
@@ -921,10 +925,15 @@ class AggregateSignClient:
                 } catch (_) {
                   return '';
                 }
-              }));
-              for (const source of sources) {
-                const match = source.match(pattern);
-                if (match) return match[1];
+              };
+              for (let index = 0; index < urls.length; index += 8) {
+                const sources = await Promise.all(
+                  urls.slice(index, index + 8).map(fetchSource)
+                );
+                for (const source of sources) {
+                  const hash = findHash(source);
+                  if (hash) return hash;
+                }
               }
               return '';
             }
@@ -1058,6 +1067,38 @@ class AggregateSignClient:
                 except Exception:
                     pass
 
+    def _hdhive_checkin_entry(self, page: Any) -> Tuple[str, Any]:
+        for attempt in range(2):
+            try:
+                page.wait_for_load_state("load", timeout=30000)
+            except Exception:
+                pass
+            self._dismiss_hdhive_announcement(page)
+            if "/login" in str(getattr(page, "url", "") or ""):
+                return "", None
+
+            user_menu = self._hdhive_user_menu(page)
+            try:
+                user_menu.wait_for(state="visible", timeout=8000)
+            except Exception:
+                pass
+            try:
+                if user_menu.count() > 0 and user_menu.is_visible():
+                    return "", user_menu
+            except Exception:
+                pass
+
+            action_hash = self._hdhive_action_hash(page, attempts=2 if attempt else 3)
+            if action_hash:
+                return action_hash, None
+
+            if attempt == 0:
+                try:
+                    self._goto_page(page, self.base_url, wait_until="domcontentloaded")
+                except Exception:
+                    pass
+        return "", None
+
     def _hdhive_checkin(
         self,
         cookie_str: str,
@@ -1102,7 +1143,7 @@ class AggregateSignClient:
                             authenticated = True
                             return True, "今日已签到"
 
-                        action_hash = self._hdhive_action_hash(page)
+                        action_hash, user_menu = self._hdhive_checkin_entry(page)
                         if action_hash:
                             authenticated = True
                             success, message, status = self._hdhive_direct_checkin(
@@ -1116,30 +1157,7 @@ class AggregateSignClient:
                                 return False, f"登录安全会话已失效: {message}"
                             return success, message
 
-                        user_menu = self._hdhive_user_menu(page)
-                        try:
-                            user_menu.wait_for(state="visible", timeout=15000)
-                        except Exception:
-                            pass
-                        try:
-                            menu_available = user_menu.count() > 0 and user_menu.is_visible()
-                        except Exception:
-                            menu_available = False
-                        if not menu_available:
-                            # 页面脚本可能刚完成加载，再探测一次动态 Server Action。
-                            action_hash = self._hdhive_action_hash(page, attempts=2)
-                            if action_hash:
-                                authenticated = True
-                                success, message, status = self._hdhive_direct_checkin(
-                                    page,
-                                    action_hash,
-                                    gamble,
-                                )
-                                if status in (0, 401, 403, 409):
-                                    authenticated = False
-                                if status == 409:
-                                    return False, f"登录安全会话已失效: {message}"
-                                return success, message
+                        if user_menu is None:
                             return False, "Cookie 无效或登录已过期，未检测到影巢登录入口"
 
                         authenticated = True
