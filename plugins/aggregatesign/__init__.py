@@ -1,6 +1,6 @@
 """
 聚合签到插件
-版本: 3.1
+版本: 3.2
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
@@ -38,7 +38,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "3.1"
+    plugin_version = "3.2"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -427,6 +427,10 @@ class AggregateSign(_PluginBase):
             self._current_account["storage_state"] = storage_state
             self._save_current_account_config()
         self.update_config(self._build_config())
+        logger.info(
+            f"{self._current_site_name}自动登录成功，account={self._current_account_name}, "
+            f"cookie_len={len(self._cookie)}, storage_state_len={len(self._storage_state)}"
+        )
         return True, message
 
     def _load_accounts(self) -> Tuple[List[Dict[str, Any]], str]:

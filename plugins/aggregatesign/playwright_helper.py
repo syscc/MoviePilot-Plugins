@@ -896,26 +896,53 @@ class AggregateSignClient:
         return f"{value[:limit]}..." if len(value) > limit else value
 
     @staticmethod
-    def _hdhive_action_hash(page: Any) -> str:
-        return str(page.evaluate(
-            """
+    def _hdhive_action_hash(page: Any, attempts: int = 3) -> str:
+        script = """
             async () => {
-              const pattern = /createServerReference\\)\\(\\s*[\"']([0-9a-f]{40,})[\"'][^\"']*[\"']checkIn[\"']/;
-              const urls = new Set([
+              const pattern = /createServerReference\\)\\(\\s*[\"']([0-9a-f]{40,})[\"'][\\s\\S]{0,400}?[\"']checkIn[\"']/;
+              const urls = Array.from(new Set([
                 ...Array.from(document.scripts).map(script => script.src),
                 ...performance.getEntriesByType('resource').map(entry => entry.name),
-              ].filter(url => url.includes('/_next/static/chunks/') && url.endsWith('.js')));
-              for (const url of urls) {
+              ])).filter(url => {
                 try {
-                  const source = await (await fetch(url, { cache: 'no-store' })).text();
-                  const match = source.match(pattern);
-                  if (match) return match[1];
-                } catch (_) {}
+                  const pathname = new URL(url, location.href).pathname;
+                  return pathname.includes('/_next/static/chunks/') && pathname.endsWith('.js');
+                } catch (_) {
+                  return false;
+                }
+              });
+              const sources = await Promise.all(urls.map(async url => {
+                try {
+                  const response = await fetch(url, {
+                    cache: 'no-store',
+                    credentials: 'same-origin',
+                  });
+                  return response.ok ? await response.text() : '';
+                } catch (_) {
+                  return '';
+                }
+              }));
+              for (const source of sources) {
+                const match = source.match(pattern);
+                if (match) return match[1];
               }
               return '';
             }
             """
-        ) or "")
+        total_attempts = max(1, int(attempts or 1))
+        for attempt in range(total_attempts):
+            try:
+                action_hash = str(page.evaluate(script) or "")
+            except Exception:
+                action_hash = ""
+            if action_hash:
+                return action_hash
+            if attempt + 1 < total_attempts:
+                try:
+                    page.wait_for_timeout(750)
+                except Exception:
+                    pass
+        return ""
 
     @staticmethod
     def _hdhive_direct_checkin(
@@ -966,19 +993,23 @@ class AggregateSignClient:
             message = f"{message} (HTTP {status})"
         return success, message, status
 
-    def _capture_hdhive_state(self, context: Any) -> None:
+    def _capture_hdhive_state(self, context: Any, authenticated: bool = False) -> None:
+        if not authenticated:
+            return
         try:
             cookie_str = self._cookie_list_to_str(context.cookies())
-            if self._parse_cookie_str(cookie_str).get("token"):
-                self._updated_cookie_str = cookie_str
+            if not self._parse_cookie_str(cookie_str).get("token"):
+                return
+            self._updated_cookie_str = cookie_str
         except Exception:
-            pass
+            return
         try:
             try:
                 state = context.storage_state(indexed_db=True)
             except TypeError:
                 state = context.storage_state()
-            self._updated_storage_state = json.dumps(state, ensure_ascii=False)
+            if isinstance(state, dict):
+                self._updated_storage_state = json.dumps(state, ensure_ascii=False)
         except Exception:
             pass
 
@@ -997,16 +1028,35 @@ class AggregateSignClient:
             return False
 
     @staticmethod
+    def _hdhive_user_menu(page: Any) -> Any:
+        return page.locator(
+            "button[aria-label='打开用户菜单'], "
+            "button[aria-label='用户菜单'], "
+            "button[data-slot='drawer-trigger']:not([aria-label='打开导航'])"
+        ).first
+
+    @staticmethod
     def _dismiss_hdhive_announcement(page: Any) -> None:
-        try:
-            button = page.locator("[role='dialog'] button").filter(
-                has_text=re.compile(r"^\s*我知道了(?:\s*\(\d+s\))?\s*$")
-            ).first
-            if button.count() > 0 and button.is_visible():
-                button.click(timeout=8000)
-                page.wait_for_timeout(300)
-        except Exception:
-            pass
+        selector = "[role='dialog'] button"
+        for attempt in range(15):
+            try:
+                button = page.locator(selector).filter(
+                    has_text=re.compile(r"^\s*我知道了(?:\s*\(\d+s\))?\s*$")
+                ).first
+                if button.count() > 0 and button.is_visible():
+                    button.click(timeout=5000)
+                    try:
+                        page.wait_for_timeout(500)
+                    except Exception:
+                        pass
+                    return
+            except Exception:
+                pass
+            if attempt + 1 < 15:
+                try:
+                    page.wait_for_timeout(300)
+                except Exception:
+                    pass
 
     def _hdhive_checkin(
         self,
@@ -1023,6 +1073,9 @@ class AggregateSignClient:
         methods = methods or ["normal"]
         gamble = any(str(method).lower() == "gamble" for method in methods)
         label = "赌狗签到" if gamble else "每日签到"
+        self._updated_cookie_str = ""
+        self._updated_storage_state = ""
+        authenticated = False
         try:
             with AggregateSignClient._browser_runtime() as playwright:
                 with AggregateSignClient._socks5_slippers_if_needed() as slip:
@@ -1035,37 +1088,73 @@ class AggregateSignClient:
                     try:
                         self._add_cookies(context, cookie_str)
                         page = context.new_page()
-                        self._goto_page(page, self.base_url, wait_until="networkidle")
+                        self._goto_page(page, self.base_url, wait_until="domcontentloaded")
+                        try:
+                            page.wait_for_load_state("load", timeout=30000)
+                        except Exception:
+                            pass
                         if "/login" in page.url:
                             return False, "Cookie 无效或登录已过期，站点跳转到登录页"
 
+                        self._dismiss_hdhive_announcement(page)
                         page_text = self._extract_page_message(page)
                         if self._is_already_signed_text(page_text):
+                            authenticated = True
                             return True, "今日已签到"
 
                         action_hash = self._hdhive_action_hash(page)
                         if action_hash:
+                            authenticated = True
                             success, message, status = self._hdhive_direct_checkin(
                                 page,
                                 action_hash,
                                 gamble,
                             )
+                            if status in (0, 401, 403, 409):
+                                authenticated = False
                             if status == 409:
                                 return False, f"登录安全会话已失效: {message}"
                             return success, message
 
-                        self._dismiss_hdhive_announcement(page)
-                        user_menu = page.locator(
-                            "button[aria-label='打开用户菜单'], button[aria-label='用户菜单']"
-                        ).first
+                        user_menu = self._hdhive_user_menu(page)
                         try:
-                            if user_menu.count() == 0:
-                                return False, "Cookie 无效或登录已过期，未检测到用户菜单"
+                            user_menu.wait_for(state="visible", timeout=15000)
+                        except Exception:
+                            pass
+                        try:
+                            menu_available = user_menu.count() > 0 and user_menu.is_visible()
+                        except Exception:
+                            menu_available = False
+                        if not menu_available:
+                            # 页面脚本可能刚完成加载，再探测一次动态 Server Action。
+                            action_hash = self._hdhive_action_hash(page, attempts=2)
+                            if action_hash:
+                                authenticated = True
+                                success, message, status = self._hdhive_direct_checkin(
+                                    page,
+                                    action_hash,
+                                    gamble,
+                                )
+                                if status in (0, 401, 403, 409):
+                                    authenticated = False
+                                if status == 409:
+                                    return False, f"登录安全会话已失效: {message}"
+                                return success, message
+                            return False, "Cookie 无效或登录已过期，未检测到影巢登录入口"
+
+                        authenticated = True
+                        try:
                             user_menu.click(timeout=10000)
                             page.wait_for_timeout(300)
                         except Exception as err:
-                            error = self._compact_page_text(str(err), limit=200)
-                            return False, f"打开影巢用户菜单失败: {error}"
+                            self._dismiss_hdhive_announcement(page)
+                            try:
+                                user_menu.wait_for(state="visible", timeout=5000)
+                                user_menu.click(timeout=10000)
+                                page.wait_for_timeout(300)
+                            except Exception as retry_err:
+                                error = self._compact_page_text(str(retry_err or err), limit=200)
+                                return False, f"打开影巢用户菜单失败: {error}"
 
                         labels = ("赌狗签到", "赌狗") if gamble else ("每日签到", "立即签到", "签到")
                         button = None
@@ -1107,7 +1196,7 @@ class AggregateSignClient:
                             return True, self._compact_page_text(result_text)
                         return False, f"{label}后未识别到签到结果"
                     finally:
-                        self._capture_hdhive_state(context)
+                        self._capture_hdhive_state(context, authenticated=authenticated)
                         browser.close()
         except AggregateSignBrowserError as err:
             return False, str(err)
@@ -1408,6 +1497,9 @@ class AggregateSignClient:
         password_selector = (
             "input[name='password'], input[autocomplete='current-password'], input[type='password']"
         )
+        submit_selector = (
+            "button[type='submit'], button:has-text('登录'), button:has-text('Login')"
+        )
         last_error: Optional[Exception] = None
         for attempt in range(1, 3):
             try:
@@ -1425,20 +1517,15 @@ class AggregateSignClient:
                     state="visible",
                     timeout=30000,
                 )
-                if self.site_key == "hdhive":
-                    page.wait_for_function(
-                        """
-                        () => {
-                          const form = document.querySelector('form');
-                          if (!form) return false;
-                          const key = Object.keys(form).find(name =>
-                            name.startsWith('__reactProps')
-                          );
-                          return Boolean(key && typeof form[key]?.onSubmit === 'function');
-                        }
-                        """,
-                        timeout=15000,
-                    )
+                page.wait_for_selector(
+                    submit_selector,
+                    state="visible",
+                    timeout=15000,
+                )
+                try:
+                    page.wait_for_timeout(500)
+                except Exception:
+                    pass
                 return
             except Exception as err:
                 last_error = err
@@ -1498,6 +1585,26 @@ class AggregateSignClient:
             diagnostic += "；登录页脚本可能未完成加载，请检查站点访问和浏览器运行环境"
         raise AggregateSignBrowserError(diagnostic) from last_error
 
+    def _wait_for_hdhive_login_state(self, context: Any, page: Any, timeout: int = 30000) -> bool:
+        deadline = time.time() + max(1, timeout) / 1000
+        while time.time() < deadline:
+            try:
+                cookie_names = {
+                    str(cookie.get("name") or "")
+                    for cookie in context.cookies()
+                    if isinstance(cookie, dict)
+                }
+                if "token" in cookie_names:
+                    # token 已由登录 Server Action 写入；菜单属于异步 UI，不作为登录成功的必要条件。
+                    return True
+            except Exception:
+                pass
+            try:
+                page.wait_for_timeout(500)
+            except Exception:
+                time.sleep(0.5)
+        return False
+
     def login(self, username: str, password: str) -> Tuple[bool, str, str, str]:
         if not username or not password:
             return False, "", "", "未配置用户名或密码"
@@ -1556,11 +1663,25 @@ class AggregateSignClient:
                             if any(keyword in page_text for keyword in ("错误", "失败", "密码", "验证码")):
                                 return False, "", "", browser_failure_message(page_text)
                             return False, "", "", browser_failure_message(
-                                "登录后仍停留在登录页，可能账号密码错误、站点登录页面变化或站点响应过慢"
+                                "登录后仍停留在登录页，可能账号密码错误、站点页面变化或站点响应过慢"
                             )
 
-                        self._goto_page(page, f"{self.base_url}{self.checkin_path}")
-                        self._wait_network_idle(page, timeout=15000)
+                        if self.site_key == "hdhive" and not self._wait_for_hdhive_login_state(context, page):
+                            page_text = self._extract_page_message(page)
+                            detail = "影巢登录后未获取到完整登录态"
+                            if page_text:
+                                detail = f"{detail}: {self._compact_page_text(page_text, limit=160)}"
+                            return False, "", "", browser_failure_message(detail)
+
+                        self._goto_page(
+                            page,
+                            f"{self.base_url}{self.checkin_path}",
+                            wait_until="domcontentloaded",
+                        )
+                        try:
+                            page.wait_for_load_state("load", timeout=30000)
+                        except Exception:
+                            pass
                         if "/login" in page.url:
                             page_text = self._extract_page_message(page)
                             return False, "", "", browser_failure_message(
