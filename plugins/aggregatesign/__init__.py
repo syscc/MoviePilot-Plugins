@@ -1,6 +1,6 @@
 """
 聚合签到插件
-版本: 3.0
+版本: 3.1
 作者: syscc
 功能:
 - 使用多账号 JSON 配置统一管理多个站点签到
@@ -38,7 +38,7 @@ class AggregateSign(_PluginBase):
     plugin_name = "聚合签到"
     plugin_desc = "聚合多个站点的每日签到，支持多账号、多站点和多签到方式"
     plugin_icon = "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png"
-    plugin_version = "3.0"
+    plugin_version = "3.1"
     plugin_author = "syscc"
     author_url = "https://github.com/syscc/MoviePilot-Plugins"
     plugin_config_prefix = "aggregatesign_"
@@ -335,7 +335,7 @@ class AggregateSign(_PluginBase):
                         f"account={self._current_account_name}: {message}"
                     )
                 else:
-                    message = f"{message}；自动登录失败: {login_message}"
+                    message = f"{message}；自动登录失败: {self._compact_login_message(login_message)}"
 
             sign_dict = {
                 "date": datetime.today().strftime("%Y-%m-%d %H:%M:%S"),
@@ -1340,7 +1340,11 @@ class AggregateSign(_PluginBase):
         if not text:
             return "登录失败"
         if "用户名或邮箱" in text and "注册账号" in text and "找回密码" in text:
-            return "登录后仍停留在登录页，可能账号密码错误、站点登录页面变化或站点响应过慢"
+            return "登录后仍停留在登录页，可能账号密码错误、站点页面变化或站点响应过慢"
+        if "安全验证或地区限制" in text:
+            return "登录页可能被站点安全验证或地区限制拦截，请为 MoviePilot 配置可访问 re0.me 的代理，或先在同一环境手动登录"
+        if "脚本可能未完成加载" in text:
+            return "登录页脚本未完成加载，请检查站点访问和浏览器运行环境"
         if len(text) > 120:
             return f"{text[:120]}..."
         return text

@@ -132,6 +132,7 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
 - 癫影 `methods` 设置为 `lucky` 时可能扣积分，不建议默认开启。
 - 影巢 `methods` 设置为 `gamble` 时启用赌狗签到，可能产生积分风险，不建议默认开启；若数组中同时存在其他方式，影巢只执行赌狗签到一次。
 - 影巢旧 `hdhive.com` 配置会自动迁移到 `https://re0.me`；旧 `storage_state` 中的影巢 Cookie 和 IndexedDB 来源也会在启动浏览器时迁移，若安全会话仍失效则用账号密码自动刷新。
+- 若 `re0.me` 屏蔽 MoviePilot 运行环境的 IP，请先为 MoviePilot 配置可访问该站点的代理；插件不会绕过验证码、Cloudflare 或其他人机验证。
 - 影巢当前签到接口需要站点前端完成请求签名，因此签到和账号密码登录都依赖 MoviePilot 运行环境中的 CloakBrowser 或 Playwright；自动登录后插件会保存包含 IndexedDB 的完整浏览器状态。
 - 每个账号的 Cookie、登录态、签到历史、连续天数、站点用户信息和通知都会独立处理。
 

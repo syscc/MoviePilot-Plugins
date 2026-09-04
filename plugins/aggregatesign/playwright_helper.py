@@ -1401,6 +1401,103 @@ class AggregateSignClient:
         except Exception as err:
             return False, f"签到异常: {err}"
 
+    def _wait_for_login_form(self, page: Any, login_url: str) -> None:
+        username_selector = (
+            "input[name='username'], input[autocomplete='username'], input[type='email']"
+        )
+        password_selector = (
+            "input[name='password'], input[autocomplete='current-password'], input[type='password']"
+        )
+        last_error: Optional[Exception] = None
+        for attempt in range(1, 3):
+            try:
+                try:
+                    page.wait_for_load_state("load", timeout=30000)
+                except Exception:
+                    pass
+                page.wait_for_selector(
+                    username_selector,
+                    state="visible",
+                    timeout=30000,
+                )
+                page.wait_for_selector(
+                    password_selector,
+                    state="visible",
+                    timeout=30000,
+                )
+                if self.site_key == "hdhive":
+                    page.wait_for_function(
+                        """
+                        () => {
+                          const form = document.querySelector('form');
+                          if (!form) return false;
+                          const key = Object.keys(form).find(name =>
+                            name.startsWith('__reactProps')
+                          );
+                          return Boolean(key && typeof form[key]?.onSubmit === 'function');
+                        }
+                        """,
+                        timeout=15000,
+                    )
+                return
+            except Exception as err:
+                last_error = err
+                if attempt >= 2:
+                    break
+                try:
+                    self._goto_page(page, login_url)
+                except Exception as goto_err:
+                    last_error = goto_err
+
+        try:
+            raw_page_url = str(page.url or "")
+            parsed_page_url = urlparse(raw_page_url)
+            page_url = urlunparse((
+                parsed_page_url.scheme,
+                parsed_page_url.netloc,
+                parsed_page_url.path or "/",
+                "",
+                "",
+                "",
+            ))
+        except Exception:
+            page_url = ""
+        try:
+            page_title = str(page.title() or "")
+        except Exception:
+            page_title = ""
+        try:
+            input_count = page.locator("input").count()
+        except Exception:
+            input_count = -1
+        try:
+            page_text = self._extract_page_message(page).lower()
+        except Exception:
+            page_text = ""
+        diagnostic = (
+            "登录页未准备好用户名/密码输入框"
+            f"（url={page_url or '未知'}, title={page_title or '未知'}, input_count={input_count}）"
+        )
+        if any(
+            keyword in f"{page_url} {page_title} {page_text}"
+            for keyword in (
+                "captcha",
+                "challenge",
+                "access denied",
+                "blocked",
+                "forbidden",
+                "验证码",
+                "安全验证",
+                "地区限制",
+                "大陆ip",
+                "屏蔽",
+            )
+        ):
+            diagnostic += "；可能被站点安全验证或地区限制拦截，请检查代理或先在同一环境手动登录"
+        elif last_error:
+            diagnostic += "；登录页脚本可能未完成加载，请检查站点访问和浏览器运行环境"
+        raise AggregateSignBrowserError(diagnostic) from last_error
+
     def login(self, username: str, password: str) -> Tuple[bool, str, str, str]:
         if not username or not password:
             return False, "", "", "未配置用户名或密码"
@@ -1438,18 +1535,19 @@ class AggregateSignClient:
                     browser, context = self._make_context(playwright, proxy)
                     try:
                         page = context.new_page()
-                        self._goto_page(page, f"{self.base_url}{self.login_path}")
-                        page.wait_for_selector("input", timeout=15000)
+                        login_url = f"{self.base_url}{self.login_path}"
+                        self._goto_page(page, login_url)
+                        self._wait_for_login_form(page, login_url)
 
                         if not self._fill_login_form(page, username, password):
                             return False, "", "", browser_failure_message("未找到可用的登录输入框")
 
                         try:
-                            page.wait_for_url(lambda url: "/login" not in url, timeout=15000)
+                            page.wait_for_url(lambda url: "/login" not in url, timeout=30000)
                         except Exception:
                             pass
                         try:
-                            page.wait_for_load_state("networkidle", timeout=15000)
+                            page.wait_for_load_state("networkidle", timeout=30000)
                         except Exception:
                             pass
 
@@ -1498,6 +1596,7 @@ class AggregateSignClient:
     def _fill_login_form(page: Any, username: str, password: str) -> bool:
         user_selectors = [
             "input[name='username']",
+            "input[autocomplete='username']",
             "input[name='email']",
             "input[type='email']",
             "input[placeholder*='邮箱']",
