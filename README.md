@@ -53,7 +53,7 @@
 | --- | --- | --- | --- |
 | `juying` | 国内 `https://jying.top`；国外 `https://www.jying.top` | 账号密码自动登录或 Cookie | `normal` |
 | `dian115` | `https://m.dian115.com` | 账号密码自动登录或 Cookie | `normal` 普通签到、`lucky` 运气签到 |
-| `hdhive` | `https://hdhive.com` | 账号密码自动登录（推荐）或完整浏览器登录态 | `normal` 普通签到、`gamble` 赌狗签到 |
+| `hdhive` | `https://re0.me` | 账号密码自动登录（推荐）或完整浏览器登录态 | `normal` 普通签到、`gamble` 赌狗签到 |
 
 ## 登录方式
 
@@ -99,6 +99,7 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
     "id": "hdhive-1",
     "site": "hdhive",
     "name": "影巢账号1",
+    "base_url": "https://re0.me",
     "username": "你的用户名或邮箱",
     "password": "你的密码",
     "cookie": "",
@@ -114,7 +115,7 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
 | `id` | 推荐填写的稳定账号标识，同一站点内必须唯一；用于隔离历史、连续天数和登录态 |
 | `site` | 站点标志，支持 `juying`、`dian115`、`hdhive` |
 | `name` | 账号显示名，用于历史和通知 |
-| `base_url` | 站点入口。聚影国内入口填 `https://jying.top`，国外入口填 `https://www.jying.top`；聚影不填时默认使用国外入口 |
+| `base_url` | 站点入口。聚影国内入口填 `https://jying.top`，国外入口填 `https://www.jying.top`；影巢入口填 `https://re0.me`；不填时使用对应站点默认入口 |
 | `username` / `password` | 用于自动登录获取 Cookie，三个站点均可用 |
 | `cookie` | 完整 Cookie，可选；留空时会尝试用账号密码自动登录 |
 | `methods` | 签到方式数组。`normal` 为普通签到；癫影支持 `lucky`，影巢支持 `gamble` |
@@ -130,6 +131,7 @@ Cookie 失效后，如果该账号配置了 `username` 和 `password`，插件�
 - 聚影每个账号可独立配置 `base_url`，国内和国外入口可以混合使用；切换入口后若原登录态失效，会按账号密码自动重新登录并更新 Cookie。
 - 癫影 `methods` 设置为 `lucky` 时可能扣积分，不建议默认开启。
 - 影巢 `methods` 设置为 `gamble` 时启用赌狗签到，可能产生积分风险，不建议默认开启；若数组中同时存在其他方式，影巢只执行赌狗签到一次。
+- 影巢旧 `hdhive.com` 配置会自动迁移到 `https://re0.me`；旧 `storage_state` 中的影巢 Cookie 和 IndexedDB 来源也会在启动浏览器时迁移，若安全会话仍失效则用账号密码自动刷新。
 - 影巢当前签到接口需要站点前端完成请求签名，因此签到和账号密码登录都依赖 MoviePilot 运行环境中的 CloakBrowser 或 Playwright；自动登录后插件会保存包含 IndexedDB 的完整浏览器状态。
 - 每个账号的 Cookie、登录态、签到历史、连续天数、站点用户信息和通知都会独立处理。
 

@@ -11,7 +11,7 @@ from sys import platform
 import time
 from typing import Any, Dict, Iterator, Optional, Tuple
 from urllib.error import HTTPError
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlparse, urlunparse
 from urllib.request import Request, build_opener, HTTPCookieProcessor, ProxyHandler
 
 try:
@@ -67,6 +67,59 @@ class AggregateSignClient:
         self._headless = headless
         self._updated_cookie_str = ""
         self._updated_storage_state = ""
+
+    @staticmethod
+    def _migrate_hdhive_storage_state(storage_state: str, target_origin: str) -> str:
+        """将旧影巢域名的浏览器状态迁移到新入口。"""
+        if not storage_state or not target_origin:
+            return storage_state
+        try:
+            state = json.loads(storage_state)
+        except Exception:
+            return storage_state
+        if not isinstance(state, dict):
+            return storage_state
+
+        target = urlparse(target_origin)
+        target_host = (target.hostname or "").lower()
+        if not target_host:
+            return storage_state
+        legacy_hosts = {"hdhive.com", "www.hdhive.com"}
+        changed = False
+
+        for cookie in state.get("cookies") or []:
+            if not isinstance(cookie, dict):
+                continue
+            raw_domain = str(cookie.get("domain") or "")
+            domain_host = raw_domain.lstrip(".").lower()
+            if domain_host in legacy_hosts:
+                cookie["domain"] = f".{target_host}" if raw_domain.startswith(".") else target_host
+                changed = True
+            raw_url = str(cookie.get("url") or "")
+            parsed_url = urlparse(raw_url)
+            if parsed_url.hostname and parsed_url.hostname.lower() in legacy_hosts:
+                cookie["url"] = urlunparse((
+                    target.scheme or parsed_url.scheme,
+                    target.netloc or parsed_url.netloc,
+                    parsed_url.path or "/",
+                    parsed_url.params,
+                    parsed_url.query,
+                    parsed_url.fragment,
+                ))
+                changed = True
+
+        for origin in state.get("origins") or []:
+            if not isinstance(origin, dict):
+                continue
+            raw_origin = str(origin.get("origin") or "")
+            parsed_origin = urlparse(raw_origin)
+            if parsed_origin.hostname and parsed_origin.hostname.lower() in legacy_hosts:
+                origin["origin"] = target_origin.rstrip("/")
+                changed = True
+
+        if not changed:
+            return storage_state
+        return json.dumps(state, ensure_ascii=False)
 
     @staticmethod
     def _parse_cookie_str(cookie_str: str) -> Dict[str, str]:
@@ -173,6 +226,11 @@ class AggregateSignClient:
         proxy: Optional[Dict[str, str]] = None,
         storage_state: str = "",
     ) -> Tuple[Any, Any]:
+        if self.site_key == "hdhive":
+            storage_state = self._migrate_hdhive_storage_state(
+                storage_state,
+                self.base_url,
+            )
         state: Optional[Dict[str, Any]] = None
         if storage_state:
             try:
@@ -767,7 +825,7 @@ class AggregateSignClient:
         body: Optional[bytes] = None,
     ) -> Tuple[int, str]:
         cookie_jar = CookieJar()
-        domain = urlparse(self.base_url).hostname or "hdhive.com"
+        domain = urlparse(self.base_url).hostname or "re0.me"
         for name, value in self._parse_cookie_str(cookie_str).items():
             cookie_jar.set_cookie(self._make_cookie(name, value, domain))
 
@@ -997,7 +1055,9 @@ class AggregateSignClient:
                             return success, message
 
                         self._dismiss_hdhive_announcement(page)
-                        user_menu = page.locator("button[aria-label='用户菜单']").first
+                        user_menu = page.locator(
+                            "button[aria-label='打开用户菜单'], button[aria-label='用户菜单']"
+                        ).first
                         try:
                             if user_menu.count() == 0:
                                 return False, "Cookie 无效或登录已过期，未检测到用户菜单"
