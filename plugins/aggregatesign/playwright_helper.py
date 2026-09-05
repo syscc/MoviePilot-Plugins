@@ -954,6 +954,44 @@ class AggregateSignClient:
         return ""
 
     @staticmethod
+    def _hdhive_checkin_response_result(
+        status: int,
+        text: str,
+        content_type: str = "",
+        action_revalidated: str = "",
+    ) -> Tuple[bool, str]:
+        if "application/json" in (content_type or ""):
+            try:
+                data = json.loads(text or "{}")
+            except Exception:
+                data = {}
+        else:
+            data = AggregateSignClient._hdhive_parse_rsc_result(text)
+        if data:
+            success, message = AggregateSignClient._hdhive_result(data, status)
+            if status >= 400 and f"HTTP {status}" not in message:
+                message = f"{message} (HTTP {status})"
+            return success, message
+        if status in (401, 403):
+            return False, "Cookie 无效或登录已过期"
+
+        compact_text = AggregateSignClient._compact_page_text(text, limit=300)
+        lower_text = compact_text.lower()
+        failure_keywords = (
+            "签到失败", "操作失败", "请求失败", "登录失效", "登录过期", "未登录",
+            "无权限", "拒绝", "错误", "异常", "error", "failed", "forbidden", "unauthorized",
+        )
+        revalidated = str(action_revalidated or "").strip().lower()
+        if (
+            status < 400
+            and revalidated not in ("", "0", "false")
+            and not any(keyword in lower_text for keyword in failure_keywords)
+        ):
+            # 影巢的 Server Action 成功时可能仅返回 revalidation 标记，没有可展示的消息体。
+            return True, "签到成功"
+        return False, compact_text or f"影巢签到返回格式异常，HTTP {status}"
+
+    @staticmethod
     def _hdhive_direct_checkin(
         page: Any,
         action_hash: str,
@@ -973,14 +1011,20 @@ class AggregateSignClient:
               });
               const text = await response.text();
               const contentType = response.headers.get('content-type') || '';
+              const actionRevalidated = response.headers.get('x-action-revalidated') || '';
               if (contentType.includes('application/json')) {
-                return { status: response.status, contentType, text };
+                return { status: response.status, contentType, text, actionRevalidated };
               }
               const businessLines = text.split('\\n').filter(line =>
                 /^\\w+:\\{/.test(line) &&
                 /\"(error|response|success|message|description)\"/.test(line)
               );
-              return { status: response.status, contentType, text: businessLines.join('\\n') };
+              return {
+                status: response.status,
+                contentType,
+                text: businessLines.join('\\n'),
+                actionRevalidated,
+              };
             }
             """,
             {"actionHash": action_hash, "gamble": gamble},
@@ -988,18 +1032,13 @@ class AggregateSignClient:
         status = int(result.get("status") or 0) if isinstance(result, dict) else 0
         text = str(result.get("text") or "") if isinstance(result, dict) else ""
         content_type = str(result.get("contentType") or "") if isinstance(result, dict) else ""
-        if "application/json" in content_type:
-            try:
-                data = json.loads(text or "{}")
-            except Exception:
-                data = {}
-        else:
-            data = AggregateSignClient._hdhive_parse_rsc_result(text)
-        if not data:
-            return False, f"影巢签到返回格式异常，HTTP {status}", status
-        success, message = AggregateSignClient._hdhive_result(data, status)
-        if status >= 400 and f"HTTP {status}" not in message:
-            message = f"{message} (HTTP {status})"
+        action_revalidated = str(result.get("actionRevalidated") or "") if isinstance(result, dict) else ""
+        success, message = AggregateSignClient._hdhive_checkin_response_result(
+            status,
+            text,
+            content_type,
+            action_revalidated,
+        )
         return success, message, status
 
     def _capture_hdhive_state(self, context: Any, authenticated: bool = False) -> None:
@@ -1205,7 +1244,35 @@ class AggregateSignClient:
                         if button is None:
                             return False, f"未找到{label}按钮，影巢页面可能已更新"
 
-                        button.click(timeout=10000)
+                        checkin_response = None
+                        try:
+                            with page.expect_response(
+                                lambda response: (
+                                    response.request.method == "POST"
+                                    and urlparse(response.url).path in ("", "/")
+                                    and bool(response.request.headers.get("next-action"))
+                                ),
+                                timeout=15000,
+                            ) as response_info:
+                                button.click(timeout=10000)
+                            checkin_response = response_info.value
+                        except PlaywrightTimeoutError:
+                            checkin_response = None
+
+                        if checkin_response is not None:
+                            try:
+                                response_text = checkin_response.text()
+                            except Exception:
+                                response_text = ""
+                            success, message = self._hdhive_checkin_response_result(
+                                checkin_response.status,
+                                response_text,
+                                str(checkin_response.headers.get("content-type") or ""),
+                                str(checkin_response.headers.get("x-action-revalidated") or ""),
+                            )
+                            if success or checkin_response.status >= 400:
+                                return success, message
+
                         page.wait_for_timeout(4000)
                         result_text = self._extract_page_message(page)
                         if self._is_already_signed_text(result_text):

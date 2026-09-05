@@ -3,7 +3,7 @@
     "name": "聚合签到",
     "description": "聚合多个站点的每日签到，支持多账号、多站点、自动登录、Cookie 登录态、定时任务和失败重试。",
     "labels": "聚合,签到,站点",
-    "version": "3.3",
+    "version": "3.4",
     "icon": "https://raw.githubusercontent.com/syscc/MoviePilot-Plugins/main/icons/aggregatesign.png",
     "author": "syscc",
     "homepage": "https://github.com/syscc/MoviePilot-Plugins",
@@ -12,6 +12,7 @@
     "v2": true,
     "release": true,
     "history": {
+      "3.4": "修复影巢赌狗签到成功后仅返回 Server Action 刷新标记时被误报失败的问题。",
       "3.3": "修复影巢 re0.me 完整浏览器登录态恢复与动态签到入口探测，并移除失效旧域名兼容。",
       "3.2": "修复影巢隐藏移动端菜单误判为用户菜单、失败状态覆盖登录态，并增强签到入口等待。",
       "3.1": "修复影巢登录页动态加载时自动刷新 Cookie 失败，并增强安全/地区限制诊断。",
